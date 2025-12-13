@@ -8,6 +8,7 @@ import pyaudio
 import av
 import numpy as np
 import time
+import cv2
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -178,6 +179,7 @@ def tryConnect(server, host, port, input):
             stream.options = {
                 "preset": "ultrafast",
                 "tune": "zerolatency",
+                "bf": "0",
             }
 
             try:
@@ -225,14 +227,28 @@ def tryConnect(server, host, port, input):
         f = clientSocket.makefile("rb")
         container = av.open(f, format="mpegts")
         video_stream = next(s for s in container.streams if s.type == "video")
+        frame_count = 0
+        stop_display = False
         for packet in container.demux(video_stream):
             for frame in packet.decode():
+                frame_count += 1
                 print(
-                    f"Received frame {frame.index} "
+                    f"Received frame {frame_count} "
                     f"{frame.width}x{frame.height}"
                 )
+                img = frame.to_ndarray(format="bgr24")
+
+                cv2.imshow("Live Stream", img)
+
+                # Required for GUI refresh
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    stop_display = True
+                    break
+            if stop_display:
+                break
 
         clientSocket.close()
+        cv2.destroyAllWindows()
         print("Client closed connections")
     return
 
