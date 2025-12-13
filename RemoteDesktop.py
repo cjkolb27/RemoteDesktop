@@ -172,9 +172,11 @@ def tryConnect(server, host, port, input):
         # udp_url = f"udp://{host}:{port}"
 
         def streamToClient(conn):
-            f = conn.makefile("wb")
+            ip, p = conn
+            serverSocket.sendto(b"Hello", (ip, p))
+            # f = conn.makefile("wb")
 
-            container = av.open(f, mode="w", format="mpegts")
+            container = av.open(f"udp://{ip}:{p}", mode="w", format="mpegts")
 
             stream = container.add_stream("h264", rate=30)
             WIDTH = 640
@@ -224,14 +226,17 @@ def tryConnect(server, host, port, input):
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         print("Looking for server")
         try:
-            clientSocket.bind(("", port))
+            clientSocket.bind(("", 0))
         except OSError:
             return
         print("Server found")
-        f = clientSocket.makefile("rb")
+        clientSocket.sendto(b"REGISTER", (host, port))
+        data, addr = clientSocket.recvfrom(64000)
+        ip, p = addr
+        # f = addr.makefile("rb")
         # IP = socket.gethostbyname(socket.gethostname())
         # upd_url = f"udp://@:{port}"
-        container = av.open(f, format="mpegts")
+        container = av.open(f"udp://{ip}:{p}", format="mpegts")
         video_stream = next(s for s in container.streams if s.type == "video")
         frame_count = 0
         stop_display = False
