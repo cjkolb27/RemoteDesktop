@@ -173,8 +173,10 @@ def tryConnect(server, host, port, input):
             container = av.open(f, mode="w", format="mpegts")
 
             stream = container.add_stream("h264", rate=30)
-            stream.width = 640
-            stream.height = 480
+            WIDTH = 320
+            HEIGHT = 240
+            stream.width = WIDTH
+            stream.height = HEIGHT
             stream.pix_fmt = "yuv420p"
             stream.options = {
                 "preset": "ultrafast",
@@ -185,11 +187,11 @@ def tryConnect(server, host, port, input):
             try:
                 while True:
                     rgb = np.random.randint(
-                        0, 255, (stream.height, stream.width, 3), dtype=np.uint8
+                        0, 255, (HEIGHT, WIDTH, 3), dtype=np.uint8
                     )
 
                     frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
-                    frame = frame.reformat(stream.width, stream.height, "yuv420p")
+                    frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
 
                     for packet in stream.encode(frame):
                         container.mux(packet)
@@ -237,6 +239,7 @@ def tryConnect(server, host, port, input):
                     f"{frame.width}x{frame.height}"
                 )
                 img = frame.to_ndarray(format="bgr24")
+                print(img.shape)
 
                 cv2.imshow("Live Stream", img)
 
