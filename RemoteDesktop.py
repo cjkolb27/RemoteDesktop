@@ -9,6 +9,7 @@ import av
 import numpy as np
 import time
 import cv2
+import mss
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -168,9 +169,9 @@ def tryConnect(server, host, port, input):
         serverSocket.listen(1)
 
         def streamToClient(conn):
-            f = conn.makefile("wb")
+            conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-            container = av.open(f, mode="w", format="mpegts")
+            container = av.open(conn.makefile("wb"), mode="w", format="mpegts")
 
             stream = container.add_stream("h264", rate=30)
             WIDTH = 320
@@ -185,18 +186,26 @@ def tryConnect(server, host, port, input):
             }
 
             try:
-                while True:
-                    rgb = np.random.randint(
-                        0, 255, (HEIGHT, WIDTH, 3), dtype=np.uint8
-                    )
+                with mss.mss() as sct:
+                    monitor = sct.monitors[1]
+                    count = 1
+                    while True:
+                        shot = sct.grab(monitor)
+                        rgb = np.frombuffer(shot.rgb, dtype=np.uint8)
+                        rgb = rgb.reshape((shot.height, shot.width, 3))
 
-                    frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
-                    frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
+                        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24").reformat(WIDTH, HEIGHT, "yuv420p")
 
-                    for packet in stream.encode(frame):
-                        container.mux(packet)
+                        if frame:
+                            for packet in stream.encode(frame):
+                                try:
+                                    conn.sendall(packet.to_bytes())
+                                except (BrokenPipeError, ConnectionResetError):
+                                    return
+                                frame = None
 
-                    time.sleep(1 / 30)
+                        print(count)
+                        count += 1
 
             except (BrokenPipeError, ConnectionResetError):
                 print("Client disconnected")
@@ -204,7 +213,10 @@ def tryConnect(server, host, port, input):
             finally:
                 # Flush encoder
                 for packet in stream.encode():
-                    container.mux(packet)
+                    try:
+                        conn.sendall(packet.to_bytes())
+                    except:
+                        pass
 
                 container.close()
                 conn.close()
@@ -220,14 +232,14 @@ def tryConnect(server, host, port, input):
         serverSocket.close()
     else:
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        clientSocket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         print("Looking for server")
         try:
             clientSocket.connect((host, port))
         except OSError:
             return
         print("Server found")
-        f = clientSocket.makefile("rb")
-        container = av.open(f, format="mpegts")
+        container = av.open(clientSocket.makefile("rb"), format="mpegts")
         video_stream = next(s for s in container.streams if s.type == "video")
         frame_count = 0
         stop_display = False
