@@ -10,7 +10,6 @@ import numpy as np
 import time
 import cv2
 import mss
-import queue
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -170,7 +169,7 @@ def tryConnect(server, host, port, input):
         # serverSocket.listen(1)
 
         IP = "127.0.0.1"
-        udp_url = f"udp://{IP}:{port}"
+        udp_url = f"udp://{host}:{port}"
 
         # def streamToClient(conn):
         # f = conn.makefile("wb")
@@ -231,7 +230,7 @@ def tryConnect(server, host, port, input):
         # print("Server found")
         # f = clientSocket.makefile("rb")
         IP = "0.0.0.0"
-        upd_url = f"udp://{IP}:{port}"
+        upd_url = f"udp://{host}:{port}"
         container = av.open(upd_url, format="mpegts")
         video_stream = next(s for s in container.streams if s.type == "video")
         frame_count = 0
@@ -255,7 +254,7 @@ def tryConnect(server, host, port, input):
             if stop_display:
                 break
 
-        clientSocket.close()
+        # clientSocket.close()
         cv2.destroyAllWindows()
         print("Client closed connections")
     return
