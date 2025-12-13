@@ -176,8 +176,7 @@ def tryConnect(server, host, port, input):
             serverSocket.sendto(b"Hello", (ip, p))
             # f = conn.makefile("wb")
 
-            container = av.open(f"udp://{ip}:{p}", mode="w", format="mpegts")
-
+            container = av.open(f"rtp://{ip}:{p}", mode="w")
             stream = container.add_stream("h264", rate=30)
             WIDTH = 640
             HEIGHT = 480
@@ -189,29 +188,33 @@ def tryConnect(server, host, port, input):
                 "tune": "zerolatency",
                 "bf": "0",
             }
-            try:
-                with mss.mss() as sct:
-                    monitor = sct.monitors[1]
-                    while True:
-                        rgb = np.array(sct.grab(monitor))[:, :, :3]
-                        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
-                        frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
 
-                        for packet in stream.encode(frame):
-                            container.mux(packet)
+            # with open("stream.sdp", "w") as f:
+            #     f.write(container.sdp)
 
-                        time.sleep(1 / 30)
+            # try:
+            #     with mss.mss() as sct:
+            #         monitor = sct.monitors[1]
+            #         while True:
+            #             rgb = np.array(sct.grab(monitor))[:, :, :3]
+            #             frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
+            #             frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
 
-            except (BrokenPipeError, ConnectionResetError):
-                print("Client disconnected")
+            #             for packet in stream.encode(frame):
+            #                 container.mux(packet)
 
-            finally:
-                # Flush encoder
-                for packet in stream.encode():
-                    container.mux(packet)
+            #             time.sleep(1 / 30)
 
-                container.close()
-                conn.close()
+            # except (BrokenPipeError, ConnectionResetError):
+            #     print("Client disconnected")
+
+            # finally:
+            #     # Flush encoder
+            #     for packet in stream.encode():
+            #         container.mux(packet)
+
+            #     container.close()
+            #     conn.close()
 
         while not End[0]:
             data, addr = serverSocket.recvfrom(1024)
@@ -232,11 +235,13 @@ def tryConnect(server, host, port, input):
         print("Server found")
         clientSocket.sendto(b"REGISTER", (host, port))
         data, addr = clientSocket.recvfrom(64000)
-        ip, p = addr
+        print(data)
+        p = clientSocket.getsockname()[1]
+        clientSocket.close()
         # f = addr.makefile("rb")
         # IP = socket.gethostbyname(socket.gethostname())
         # upd_url = f"udp://@:{port}"
-        container = av.open(f"udp://{ip}:{p}", format="mpegts")
+        container = av.open("stream.sdp")
         video_stream = next(s for s in container.streams if s.type == "video")
         frame_count = 0
         stop_display = False
