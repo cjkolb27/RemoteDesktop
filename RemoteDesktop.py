@@ -9,7 +9,6 @@ import av
 import numpy as np
 import time
 import cv2
-import mss
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -163,23 +162,19 @@ def tryConnect(server, host, port, input):
     print("Thread Started")
     End[0] = False
     if server:
-        serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print(f"{host} {port}")
         serverSocket.bind((host, port))
-        
-
-        # IP = "127.0.0.1"
-        # udp_url = f"udp://{host}:{port}"
+        serverSocket.listen(1)
 
         def streamToClient(conn):
-            ip, p = conn
-            serverSocket.sendto(b"Hello", (ip, p))
-            # f = conn.makefile("wb")
+            f = conn.makefile("wb")
 
-            container = av.open(f"rtp://{ip}:{p}", mode="w")
+            container = av.open(f, mode="w", format="mpegts")
+
             stream = container.add_stream("h264", rate=30)
-            WIDTH = 640
-            HEIGHT = 480
+            WIDTH = 320
+            HEIGHT = 240
             stream.width = WIDTH
             stream.height = HEIGHT
             stream.pix_fmt = "yuv420p"
@@ -189,59 +184,50 @@ def tryConnect(server, host, port, input):
                 "bf": "0",
             }
 
-            # with open("stream.sdp", "w") as f:
-            #     f.write(container.sdp)
+            try:
+                while True:
+                    rgb = np.random.randint(
+                        0, 255, (HEIGHT, WIDTH, 3), dtype=np.uint8
+                    )
 
-            # try:
-            #     with mss.mss() as sct:
-            #         monitor = sct.monitors[1]
-            #         while True:
-            #             rgb = np.array(sct.grab(monitor))[:, :, :3]
-            #             frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
-            #             frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
+                    frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
+                    frame = frame.reformat(WIDTH, HEIGHT, "yuv420p")
 
-            #             for packet in stream.encode(frame):
-            #                 container.mux(packet)
+                    for packet in stream.encode(frame):
+                        container.mux(packet)
 
-            #             time.sleep(1 / 30)
+                    time.sleep(1 / 30)
 
-            # except (BrokenPipeError, ConnectionResetError):
-            #     print("Client disconnected")
+            except (BrokenPipeError, ConnectionResetError):
+                print("Client disconnected")
 
-            # finally:
-            #     # Flush encoder
-            #     for packet in stream.encode():
-            #         container.mux(packet)
+            finally:
+                # Flush encoder
+                for packet in stream.encode():
+                    container.mux(packet)
 
-            #     container.close()
-            #     conn.close()
+                container.close()
+                conn.close()
 
         while not End[0]:
-            data, addr = serverSocket.recvfrom(1024)
-            print(f"Client Connected: {addr}")
+            connId, _ = serverSocket.accept()
+            print("Client Connected")
             threading.Thread(
                 target=streamToClient,
-                args=(addr,),
+                args=(connId,),
                 daemon=True
             ).start()
         serverSocket.close()
     else:
-        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print("Looking for server")
         try:
-            clientSocket.bind(("", 0))
+            clientSocket.connect((host, port))
         except OSError:
             return
         print("Server found")
-        clientSocket.sendto(b"REGISTER", (host, port))
-        data, addr = clientSocket.recvfrom(64000)
-        print(data)
-        p = clientSocket.getsockname()[1]
-        clientSocket.close()
-        # f = addr.makefile("rb")
-        # IP = socket.gethostbyname(socket.gethostname())
-        # upd_url = f"udp://@:{port}"
-        container = av.open("stream.sdp")
+        f = clientSocket.makefile("rb")
+        container = av.open(f, format="mpegts")
         video_stream = next(s for s in container.streams if s.type == "video")
         frame_count = 0
         stop_display = False
@@ -264,7 +250,7 @@ def tryConnect(server, host, port, input):
             if stop_display:
                 break
 
-        # clientSocket.close()
+        clientSocket.close()
         cv2.destroyAllWindows()
         print("Client closed connections")
     return
@@ -282,3 +268,4 @@ if __name__ == "__main__":
     win.resize(300, 150)
     win.show()
     sys.exit(app.exec_())
+    
