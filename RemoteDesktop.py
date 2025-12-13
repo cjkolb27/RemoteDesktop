@@ -166,7 +166,7 @@ def tryConnect(server, host, port, input):
         serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         print(f"{host} {port}")
         serverSocket.bind((host, port))
-        serverSocket.listen(1)
+        
 
         # IP = "127.0.0.1"
         # udp_url = f"udp://{host}:{port}"
@@ -212,11 +212,11 @@ def tryConnect(server, host, port, input):
                 conn.close()
 
         while not End[0]:
-            connId, _ = serverSocket.accept()
-            print("Client Connected")
+            data, addr = serverSocket.recvfrom(1024)
+            print(f"Client Connected: {addr}")
             threading.Thread(
                 target=streamToClient,
-                args=(connId,),
+                args=(addr,),
                 daemon=True
             ).start()
         serverSocket.close()
@@ -224,7 +224,7 @@ def tryConnect(server, host, port, input):
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         print("Looking for server")
         try:
-            clientSocket.connect((host, port))
+            clientSocket.bind(("", port))
         except OSError:
             return
         print("Server found")
