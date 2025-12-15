@@ -3,20 +3,34 @@ import socket
 import threading
 from PyQt5 import QtWidgets, QtCore
 from pathlib import Path
-import struct
 import pyaudio
-import av
 import numpy as np
 import time
 import cv2
 import mss
+import struct
+from queue import Queue
+from collections import defaultdict
 
-class SocketReader:
-    def __init__(self, sock):
-        self.sock = sock
-    
-    def read(self, n):
-        return self.sock.recv(n)
+MTU = 1300
+
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("Socket closed")
+        data += chunk
+    return data
+
+def udp_recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recvfrom(size - len(data))
+        if not chunk:
+            raise ConnectionError("Socket closed")
+        data += chunk
+    return data
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -175,65 +189,65 @@ def tryConnect(server, host, port, input):
         serverSocket.bind((host, port))
         serverSocket.listen(1)
 
-        def streamToClient(conn):
+        def streamToClient(conn, udp, addr):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-
-            container = av.open(conn.makefile("wb"), mode="w", format="mpegts")
-
-            stream = container.add_stream("h264", rate=30)
-            WIDTH = 320
-            HEIGHT = 240
-            stream.width = WIDTH
-            stream.height = HEIGHT
-            stream.pix_fmt = "yuv420p"
-            stream.options = {
-                "preset": "ultrafast",
-                "tune": "zerolatency",
-                "bf": "0",
-            }
-
-            try:
+            fqueue = Queue(maxsize=3)
+            def capture():
                 with mss.mss() as sct:
-                    monitor = sct.monitors[1]
+                    monitor = sct.monitors[2]
                     count = 1
                     while True:
-                        shot = sct.grab(monitor)
-                        rgb = np.frombuffer(shot.rgb, dtype=np.uint8)
-                        rgb = rgb.reshape((shot.height, shot.width, 3))
+                        rgb = np.array(sct.grab(monitor))[:, :, :3]
+                        if not fqueue.full():
+                            fqueue.put(rgb)
+                            print(count)
+                            count += 1
 
-                        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24").reformat(WIDTH, HEIGHT, "yuv420p")
-
-                        if frame:
-                            for packet in stream.encode(frame):
-                                try:
-                                    container.mux(packet)
-                                except (BrokenPipeError, ConnectionResetError):
-                                    return
-                                frame = None
-
-                        print(count)
+            def sending(conns, add):
+                try:
+                    count = 1
+                    while True:
+                        frame = fqueue.get()
+                        _, jpeg = cv2.imencode('.png', frame, [int(cv2.IMWRITE_PNG_COMPRESSION), 3])
+                        #_, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
+                        data = jpeg.tobytes()
+                        print("Len: " + str(len(data)))
+                        total = (len(data) + MTU - 1) // MTU
+                        for i in range(total):
+                            chunk = data[i * MTU: (i + 1) * MTU]
+                            print(f"Count: {count}, I: {i}, Total: {total}")
+                            header = struct.pack("!IHH", count, i, total)
+                            conns.sendto(header + chunk, add)
                         count += 1
 
-            except (BrokenPipeError, ConnectionResetError):
-                print("Client disconnected")
+                except (BrokenPipeError, ConnectionResetError):
+                    print("Client disconnected")
+                    pass
 
-            finally:
-                # Flush encoder
-                for packet in stream.encode():
-                    try:
-                        container.mux(packet)
-                    except:
-                        pass
+                finally:
+                    conns.close()
 
-                container.close()
-                conn.close()
+            def inputs(conns):
+                return
+
+            threading.Thread(target=capture, daemon=True).start()
+            threading.Thread(target=sending, args=(udp, addr,), daemon=True).start()
+            threading.Thread(target=inputs, args=(conn,), daemon=True).start()
 
         while not End[0]:
             connId, _ = serverSocket.accept()
+            udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udpSocket.bind(("", 0))
+            ip, p = udpSocket.getsockname()
+            data = f"{ip},{p}".encode()
+            connId.send(len(data).to_bytes(4, 'big') + data)
             print("Client Connected")
+            data, addr = udpSocket.recvfrom(64)
+            print("Data: " + data.decode())
+            print(addr)
             threading.Thread(
                 target=streamToClient,
-                args=(connId,),
+                args=(connId, udpSocket, addr,),
                 daemon=True
             ).start()
         serverSocket.close()
@@ -246,32 +260,64 @@ def tryConnect(server, host, port, input):
         except OSError:
             return
         print("Server found")
-        container = av.open(SocketReader(clientSocket), format="mpegts")
-        video_stream = next(s for s in container.streams if s.type == "video")
-        frame_count = 0
-        stop_display = False
-        for packet in container.demux(video_stream):
-            for frame in packet.decode():
-                frame_count += 1
-                print(
-                    f"Received frame {frame_count} "
-                    f"{frame.width}x{frame.height}"
+
+        udpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        s = recv_exact(clientSocket, 4)
+        if not s:
+            return
+        data = recv_exact(clientSocket, int.from_bytes(s, 'big')).decode()
+        ip, p = data.split(",")
+        print(ip + " " + p)
+        udpSocket.sendto("Hello!".encode(), (host, int(p)))
+        
+        try:
+            fcount = 0
+            lasttime = time.time()
+            fps = 0.0
+            buffer = defaultdict(dict)
+            while not End[0]:
+                frame_bytes = None
+                while True:
+                    data, _ = udpSocket.recvfrom(2048)
+                    if not data:
+                        break
+                    fid, chid, total = struct.unpack("!IHH", data[:8])
+                    payload = data[8:]
+                    buffer[fid][chid] = payload
+
+                    if len(buffer[fid]) == total:
+                        frame_bytes = b"".join(buffer[fid][i] for i in range(total))
+                        del buffer[fid]
+                        break
+
+                if frame_bytes is None:
+                    continue
+
+                img = cv2.imdecode(
+                    np.frombuffer(frame_bytes, np.uint8),
+                    cv2.IMREAD_COLOR
                 )
-                img = frame.to_ndarray(format="bgr24")
-                print(img.shape)
 
-                cv2.imshow("Live Stream", img)
+                if img is None:
+                    print("Decode failed — dropping frame")
+                    continue
 
-                # Required for GUI refresh
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    stop_display = True
+                fcount += 1
+                now = time.time()
+                if now - lasttime >= 1.0:
+                    fps = fcount / (now - lasttime)
+                    fcount = 0
+                    lasttime = now
+                    print(f"Display FPS: {fps:.1f}")
+                cv2.imshow("Screen Stream", img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-            if stop_display:
-                break
-
-        clientSocket.close()
-        cv2.destroyAllWindows()
-        print("Client closed connections")
+        finally:
+            udpSocket.close()
+            clientSocket.close()
+            cv2.destroyAllWindows()
+            print("Client closed connections")
     return
 
 if __name__ == "__main__":

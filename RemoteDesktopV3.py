@@ -3,13 +3,12 @@ import socket
 import threading
 from PyQt5 import QtWidgets, QtCore
 from pathlib import Path
-import struct
 import pyaudio
-import av
 import numpy as np
 import time
 import cv2
 import mss
+import subprocess
 
 class SocketReader:
     def __init__(self, sock):
@@ -177,56 +176,68 @@ def tryConnect(server, host, port, input):
 
         def streamToClient(conn):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # fqueue = Queue(maxsize=3)
+            WIDTH = 1280
+            HEIGHT = 720
+            FPS = 30
+            ffmpeg = subprocess.Popen(
+                [
+                    "ffmpeg",
+                    "-f", "rawvideo",
+                    "-pix_fmt", "bgr24",
+                    "-s", f"{WIDTH}x{HEIGHT}",
+                    "-r", str(FPS),
+                    "-i", "-",
 
-            container = av.open(conn.makefile("wb"), mode="w", format="mpegts")
+                    "-c:v", "h264_nvenc",
+                    "-preset", "p1",
+                    "-tune", "ull",
+                    "-rc", "cbr",
+                    "-b:v", "8M",
+                    "-maxrate", "8M",
+                    "-bufsize", "4M",
 
-            stream = container.add_stream("h264", rate=30)
-            WIDTH = 320
-            HEIGHT = 240
-            stream.width = WIDTH
-            stream.height = HEIGHT
-            stream.pix_fmt = "yuv420p"
-            stream.options = {
-                "preset": "ultrafast",
-                "tune": "zerolatency",
-                "bf": "0",
-            }
+                    "-g", "30",
+                    "-forced-idr", "1",
+                    "-pix_fmt", "yuv420p",
+                    "-profile:v", "high",
 
-            try:
+                    "-f", "mpegts",
+                    "pipe:1"
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
+            def capture():
                 with mss.mss() as sct:
-                    monitor = sct.monitors[1]
-                    count = 1
+                    monitor = sct.monitors[2]
                     while True:
-                        shot = sct.grab(monitor)
-                        rgb = np.frombuffer(shot.rgb, dtype=np.uint8)
-                        rgb = rgb.reshape((shot.height, shot.width, 3))
+                        rgb = np.array(sct.grab(monitor))[:, :, :3]
+                        rgb = cv2.resize(rgb, (WIDTH, HEIGHT))
+                        rgb = rgb.astype(np.uint8)
+                        try:
+                            ffmpeg.stdin.write(rgb.tobytes())
+                        except (BrokenPipeError, OSError):
+                            break
+                        # time.sleep(1 / FPS)
 
-                        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24").reformat(WIDTH, HEIGHT, "yuv420p")
+            def sending(conns):
+                try:
+                    while True:
+                        data = ffmpeg.stdout.read(4096)
+                        if not data:
+                            break
+                        conns.sendall(data)
 
-                        if frame:
-                            for packet in stream.encode(frame):
-                                try:
-                                    container.mux(packet)
-                                except (BrokenPipeError, ConnectionResetError):
-                                    return
-                                frame = None
+                except (BrokenPipeError, ConnectionResetError):
+                    print("Client disconnected")
+                    pass
 
-                        print(count)
-                        count += 1
+                finally:
+                    conns.close()
 
-            except (BrokenPipeError, ConnectionResetError):
-                print("Client disconnected")
-
-            finally:
-                # Flush encoder
-                for packet in stream.encode():
-                    try:
-                        container.mux(packet)
-                    except:
-                        pass
-
-                container.close()
-                conn.close()
+            threading.Thread(target=capture, daemon=True).start()
+            threading.Thread(target=sending, args=(conn,), daemon=True).start()
 
         while not End[0]:
             connId, _ = serverSocket.accept()
@@ -238,40 +249,32 @@ def tryConnect(server, host, port, input):
             ).start()
         serverSocket.close()
     else:
-        clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        clientSocket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        print("Looking for server")
+        # clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # clientSocket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        # print("Looking for server")
+        # try:
+        #     clientSocket.connect((host, port))
+        # except OSError:
+        #     return
+        
         try:
-            clientSocket.connect((host, port))
-        except OSError:
-            return
-        print("Server found")
-        container = av.open(SocketReader(clientSocket), format="mpegts")
-        video_stream = next(s for s in container.streams if s.type == "video")
-        frame_count = 0
-        stop_display = False
-        for packet in container.demux(video_stream):
-            for frame in packet.decode():
-                frame_count += 1
-                print(
-                    f"Received frame {frame_count} "
-                    f"{frame.width}x{frame.height}"
-                )
-                img = frame.to_ndarray(format="bgr24")
-                print(img.shape)
+            cmd = [
+                "ffplay",
+                "-loglevel", "warning",
+                "-fflags", "nobuffer",
+                "-flags", "low_delay",
+                "-framedrop",
+                "-sync", "ext",
+                "-probesize", "32",
+                "-analyzeduration", "0",
+                "-vf", "setpts=PTS-STARTPTS",
+                f"tcp://{host}:{port}"
+            ]
 
-                cv2.imshow("Live Stream", img)
-
-                # Required for GUI refresh
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    stop_display = True
-                    break
-            if stop_display:
-                break
-
-        clientSocket.close()
-        cv2.destroyAllWindows()
-        print("Client closed connections")
+            subprocess.run(cmd)
+        finally:
+            # clientSocket.close()
+            print("Client closed connections")
     return
 
 if __name__ == "__main__":
