@@ -28,7 +28,7 @@ encoder = nvc.CreateEncoder(
     height=HEIGHT,
     fmt="ABGR",
     codec="h264",
-    gop=120,
+    gop=1,
     usecpuinputbuffer=True,
     preset="P2",
     **ENC_PARAMS
