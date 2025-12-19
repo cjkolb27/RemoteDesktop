@@ -17,7 +17,10 @@ FPS = 30
 GPU_ID = 0
 
 ENC_PARAMS = {
-    "bitrate": "40M",              # 10 Megabits per second
+    "bitrate": "30M",              # 10 Megabits per second
+    "max_bitrate": "40M",
+    "rc_mode": "vbr",
+    "profile": "high"
 }
 
 encoder = nvc.CreateEncoder(
@@ -25,10 +28,9 @@ encoder = nvc.CreateEncoder(
     height=HEIGHT,
     fmt="ABGR",
     codec="h264",
-    gop=0,
+    gop=120,
     usecpuinputbuffer=True,
-    fps=FPS,
-    preset="P1",
+    preset="P2",
     **ENC_PARAMS
 )
 
@@ -197,7 +199,7 @@ def tryConnect(server, host, port, input):
     if server:
         serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print(f"{host} {port}")
-        serverSocket.bind((host, port))
+        serverSocket.bind(("0.0.0.0", port))
         serverSocket.listen(1)
 
         def streamToClient(conn):
@@ -242,7 +244,7 @@ def tryConnect(server, host, port, input):
 
             threading.Thread(target=capture, daemon=True).start()
             threading.Thread(target=sending, args=(conn,), daemon=True).start()
-
+        print("Looking For Connections")
         while not End[0]:
             connId, _ = serverSocket.accept()
             print("Client Connected")
