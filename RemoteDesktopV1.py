@@ -3,38 +3,13 @@ import socket
 import threading
 from PyQt5 import QtWidgets, QtCore
 from pathlib import Path
+import struct
 import pyaudio
+import av
 import numpy as np
 import time
 import cv2
 import mss
-from queue import Queue
-import av
-import PyNvVideoCodec as nvc
-
-WIDTH, HEIGHT = 2560, 1440
-FPS = 30
-GPU_ID = 0
-
-ENC_PARAMS = {
-    "bitrate": "40M",              # 10 Megabits per second
-}
-
-encoder = nvc.CreateEncoder(
-    width=WIDTH,
-    height=HEIGHT,
-    fmt="ABGR",
-    codec="h264",
-    gop=0,
-    usecpuinputbuffer=True,
-    fps=FPS,
-    preset="P1",
-    **ENC_PARAMS
-)
-
-codec_ctx = av.CodecContext.create('h264', 'r')
-codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
-codec_ctx.thread_type = 'SLICE'
 
 class SocketReader:
     def __init__(self, sock):
@@ -202,46 +177,56 @@ def tryConnect(server, host, port, input):
 
         def streamToClient(conn):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            fqueue = Queue(maxsize=3)
-            def capture():
+
+            container = av.open(conn.makefile("wb"), mode="w", format="mpegts")
+
+            stream = container.add_stream("h264", rate=30)
+            WIDTH = 320
+            HEIGHT = 240
+            stream.width = WIDTH
+            stream.height = HEIGHT
+            stream.pix_fmt = "yuv420p"
+            stream.options = {
+                "preset": "ultrafast",
+                "tune": "zerolatency",
+                "bf": "0",
+            }
+
+            try:
                 with mss.mss() as sct:
                     monitor = sct.monitors[1]
-                    fps_start_time = time.time()
-                    fps_counter = 0
-                    current_fps = 0
+                    count = 1
                     while True:
-                        sct_img = sct.grab(monitor)
-                        frame = np.array(sct_img) #[:, :, :3]  # RGB
-                        #frame_1080 = cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_NEAREST)
-                        
-                        packets = encoder.Encode(frame)
-                        fps_counter += 1
-                        if (time.time() - fps_start_time) > 1.0:
-                            current_fps = fps_counter
-                            print(f"SERVER (Capture) FPS: {current_fps}")
-                            fps_counter = 0
-                            fps_start_time = time.time()
-                        if packets:
-                            if fqueue.full():
-                                try: fqueue.get_nowait() # Always keep the queue fresh
-                                except: pass
-                            fqueue.put(packets)
+                        shot = sct.grab(monitor)
+                        rgb = np.frombuffer(shot.rgb, dtype=np.uint8)
+                        rgb = rgb.reshape((shot.height, shot.width, 3))
 
-            def sending(conns):
-                try:
-                    while True:
-                        frame = fqueue.get()
-                        conns.send(len(frame).to_bytes(4, 'big') + frame)
+                        frame = av.VideoFrame.from_ndarray(rgb, format="rgb24").reformat(WIDTH, HEIGHT, "yuv420p")
 
-                except (BrokenPipeError, ConnectionResetError):
-                    print("Client disconnected")
-                    pass
+                        if frame:
+                            for packet in stream.encode(frame):
+                                try:
+                                    container.mux(packet)
+                                except (BrokenPipeError, ConnectionResetError):
+                                    return
+                                frame = None
 
-                finally:
-                    conns.close()
+                        print(count)
+                        count += 1
 
-            threading.Thread(target=capture, daemon=True).start()
-            threading.Thread(target=sending, args=(conn,), daemon=True).start()
+            except (BrokenPipeError, ConnectionResetError):
+                print("Client disconnected")
+
+            finally:
+                # Flush encoder
+                for packet in stream.encode():
+                    try:
+                        container.mux(packet)
+                    except:
+                        pass
+
+                container.close()
+                conn.close()
 
         while not End[0]:
             connId, _ = serverSocket.accept()
@@ -261,57 +246,32 @@ def tryConnect(server, host, port, input):
         except OSError:
             return
         print("Server found")
+        container = av.open(SocketReader(clientSocket), format="mpegts")
+        video_stream = next(s for s in container.streams if s.type == "video")
+        frame_count = 0
+        stop_display = False
+        for packet in container.demux(video_stream):
+            for frame in packet.decode():
+                frame_count += 1
+                print(
+                    f"Received frame {frame_count} "
+                    f"{frame.width}x{frame.height}"
+                )
+                img = frame.to_ndarray(format="bgr24")
+                print(img.shape)
 
-        def recv_exact(sock, size):
-            data = b""
-            while len(data) < size:
-                chunk = sock.recv(size - len(data))
-                if not chunk:
-                    raise ConnectionError("Socket closed")
-                data += chunk
-            return data
-        
-        try:
-            display_fps_start_time = time.time()
-            display_fps_counter = 0
-            display_fps_text = "FPS: 0"
+                cv2.imshow("Live Stream", img)
 
-            while not End[0]:
-                size = recv_exact(clientSocket, 4)
-                if not size:
+                # Required for GUI refresh
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    stop_display = True
                     break
-                size = int.from_bytes(size, 'big')
-                packets = recv_exact(clientSocket, size)
-                raw = bytes(packets)
-                if not raw: # Skip empty packets
-                    continue
-                frames = av.Packet(raw)
-                try:
-                    allFrames = codec_ctx.decode(frames)
-                    for f in allFrames:
-                        img = f.to_ndarray(format='rgb24')
-                        # img_upscaled = cv2.resize(img, (2560, 1440), interpolation=cv2.INTER_LINEAR)
+            if stop_display:
+                break
 
-                        display_fps_counter += 1
-                        if (time.time() - display_fps_start_time) > 1.0:
-                            display_fps_text = f"FPS: {display_fps_counter}"
-                            display_fps_counter = 0
-                            display_fps_start_time = time.time()
-
-                        # Draw the FPS on the image before showing it
-                        cv2.putText(img, display_fps_text, (10, 30), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        
-                        cv2.imshow("Decoded Video", img)
-                        if cv2.waitKey(1) & 0xFF == ord('q'):
-                            break
-                except Exception as e:
-                    print(f"Error: {e}")
-                    continue
-        finally:
-            clientSocket.close()
-            cv2.destroyAllWindows()
-            print("Client closed connections")
+        clientSocket.close()
+        cv2.destroyAllWindows()
+        print("Client closed connections")
     return
 
 if __name__ == "__main__":
