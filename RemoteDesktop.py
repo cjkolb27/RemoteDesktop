@@ -6,13 +6,11 @@ from pathlib import Path
 import pyaudio
 import numpy as np
 import time
-import cv2
 import mss
 from queue import Queue
 import av
 import PyNvVideoCodec as nvc
-import win32api
-import win32con
+import pygame
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 30
@@ -42,12 +40,6 @@ encoder = nvc.CreateEncoder(
 codec_ctx = av.CodecContext.create('hevc', 'r')
 codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
 # codec_ctx.thread_type = 'SLICE'
-
-def mouse_evt(event, x, y, flags, param):
-    # Mouse is Moving
-    win32api.SetCursor(None)
-    # if event == cv2.EVENT_MOUSEMOVE:
-    #     win32api.SetCursor(win32api.LoadCursor(0, win32con.IDC_SIZEALL))
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -281,11 +273,28 @@ def tryConnect(server, host, port, input):
             return data
         
         try:
+            pygame.init()
+            screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.DOUBLEBUF | pygame.HWSURFACE | pygame.SCALED)
+            pygame.display.set_caption("Remote Desktop")
+            font = pygame.font.SysFont("Arial", 24)
+
             display_fps_start_time = time.time()
             display_fps_counter = 0
             display_fps_text = "FPS: 0"
 
             while not End[0]:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        End[0] = True
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_q:
+                            End[0] = True
+                    elif event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.MOUSEMOTION:
+                        # PyGame gives you x, y directly
+                        mx, my = pygame.mouse.get_pos()
+                        # Scale coordinates for your 1440p server
+                        server_x = int(mx * (2560 / WIDTH))
+                        server_y = int(my * (1440 / HEIGHT))
                 size = recv_exact(clientSocket, 4)
                 if not size:
                     break
@@ -294,38 +303,29 @@ def tryConnect(server, host, port, input):
                 raw = bytes(packets)
                 if not raw: # Skip empty packets
                     continue
-                frames = av.Packet(raw)
                 try:
+                    frames = av.Packet(raw)
                     allFrames = codec_ctx.decode(frames)
                     for f in allFrames:
                         img = f.to_ndarray(format='rgb24')
                         # img_upscaled = cv2.resize(img, (2560, 1440), interpolation=cv2.INTER_LINEAR)
-
+                        surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
                         display_fps_counter += 1
                         if (time.time() - display_fps_start_time) > 1.0:
                             display_fps_text = f"FPS: {display_fps_counter}"
                             display_fps_counter = 0
                             display_fps_start_time = time.time()
 
-                        win_name = "Decoded Video"    
-                        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
-
-                        # Draw the FPS on the image before showing it
-                        cv2.putText(img, display_fps_text, (10, 30), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                        
-                        cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-                        cv2.setMouseCallback(win_name, mouse_evt)
-                        
-                        cv2.imshow(win_name, img)
-                        if cv2.waitKey(1) & 0xFF == ord('q'):
-                            break
+                        screen.blit(surface, (0, 0)) 
+                        fps_surface = font.render(display_fps_counter, True, (0, 255, 0))
+                        screen.blit(fps_surface, (10, 10))
+                        pygame.display.flip()
                 except Exception as e:
                     print(f"Error: {e}")
                     continue
         finally:
             clientSocket.close()
-            cv2.destroyAllWindows()
+            pygame.quit()
             print("Client closed connections")
     return
 
