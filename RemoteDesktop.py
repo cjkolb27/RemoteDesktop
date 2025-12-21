@@ -309,7 +309,7 @@ def tryConnect(server, host, port, input):
                     for f in allFrames:
                         img = f.to_ndarray(format='rgb24')
                         # img_upscaled = cv2.resize(img, (2560, 1440), interpolation=cv2.INTER_LINEAR)
-                        surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+                        surface = pygame.image.frombuffer(img.data, (f.width, f.height), 'BGR')
                         display_fps_counter += 1
                         if (time.time() - display_fps_start_time) > 1.0:
                             display_fps_text = f"FPS: {display_fps_counter}"
@@ -317,9 +317,9 @@ def tryConnect(server, host, port, input):
                             display_fps_start_time = time.time()
 
                         screen.blit(surface, (0, 0)) 
-                        fps_surface = font.render(display_fps_counter, True, (0, 255, 0))
+                        fps_surface = font.render(display_fps_text, True, (0, 255, 0))
                         screen.blit(fps_surface, (10, 10))
-                        pygame.display.flip()
+                        pygame.display.update()
                 except Exception as e:
                     print(f"Error: {e}")
                     continue
