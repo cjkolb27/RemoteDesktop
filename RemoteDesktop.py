@@ -208,7 +208,7 @@ def tryConnect(server, host, port, input):
 
         def streamToClient(conn):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            fqueue = Queue(maxsize=3)
+            fqueue = Queue(maxsize=1)
             def capture():
                 with mss.mss() as sct:
                     monitor = sct.monitors[1]
@@ -236,9 +236,7 @@ def tryConnect(server, host, port, input):
                             fps_counter = 0
                             fps_start_time = time.time()
                         if packets:
-                            packets = packets
-                            
-                            # conns.send(len(packets).to_bytes(4, 'big') + packets)
+                            conns.send(len(packets).to_bytes(4, 'big') + packets)
 
                 except (BrokenPipeError, ConnectionResetError):
                     print("Client disconnected")
