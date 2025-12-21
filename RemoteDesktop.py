@@ -11,39 +11,43 @@ import mss
 from queue import Queue
 import av
 import PyNvVideoCodec as nvc
+import win32api
+import win32con
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 30
 GPU_ID = 0
 
 ENC_PARAMS = {
-    "bitrate": "30M",              # 10 Megabits per second
-    "max_bitrate": "40M",
+    "bitrate": "18M",              # 10 Megabits per second
+    "max_bitrate": "30M",
     "rc_mode": "vbr",
-    "profile": "high"
+    "profile": "main",
+    "multi_pass": "disabled",
+    "bframes": 0,
 }
 
 encoder = nvc.CreateEncoder(
     width=WIDTH,
     height=HEIGHT,
     fmt="ABGR",
-    codec="h264",
-    gop=1,
+    codec="hevc",
+    gop=60,
     usecpuinputbuffer=True,
+    fps=60,
     preset="P2",
     **ENC_PARAMS
 )
 
-codec_ctx = av.CodecContext.create('h264', 'r')
+codec_ctx = av.CodecContext.create('hevc', 'r')
 codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
-codec_ctx.thread_type = 'SLICE'
+# codec_ctx.thread_type = 'SLICE'
 
-class SocketReader:
-    def __init__(self, sock):
-        self.sock = sock
-    
-    def read(self, n):
-        return self.sock.recv(n)
+def mouse_evt(event, x, y, flags, param):
+    # Mouse is Moving
+    win32api.SetCursor(None)
+    # if event == cv2.EVENT_MOUSEMOVE:
+    #     win32api.SetCursor(win32api.LoadCursor(0, win32con.IDC_SIZEALL))
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -82,8 +86,8 @@ class MainWindow(QtWidgets.QWidget):
         self.thread = None
 
         # UI elements
-        self.hostname_label   = QtWidgets.QLabel("Hostname:")
-        self.hostname_edit  = QtWidgets.QLineEdit("")
+        self.hostname_label = QtWidgets.QLabel("Hostname:")
+        self.hostname_edit = QtWidgets.QLineEdit("")
 
         self.port_label = QtWidgets.QLabel("Server Port:")
         self.port_spin = QtWidgets.QSpinBox()
@@ -208,14 +212,22 @@ def tryConnect(server, host, port, input):
             def capture():
                 with mss.mss() as sct:
                     monitor = sct.monitors[1]
+                    while not End[0]:
+                        sct_img = sct.grab(monitor)
+                        frame = np.array(sct_img) #[:, :, :3]  # RGB
+                        if fqueue.full():
+                            print("Full")
+                            try: fqueue.get_nowait() # Always keep the queue fresh
+                            except: pass
+                        fqueue.put(frame)
+
+            def sending(conns):
+                try:
                     fps_start_time = time.time()
                     fps_counter = 0
                     current_fps = 0
-                    while True:
-                        sct_img = sct.grab(monitor)
-                        frame = np.array(sct_img) #[:, :, :3]  # RGB
-                        #frame_1080 = cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_NEAREST)
-                        
+                    while not End[0]:
+                        frame = fqueue.get()
                         packets = encoder.Encode(frame)
                         fps_counter += 1
                         if (time.time() - fps_start_time) > 1.0:
@@ -224,16 +236,9 @@ def tryConnect(server, host, port, input):
                             fps_counter = 0
                             fps_start_time = time.time()
                         if packets:
-                            if fqueue.full():
-                                try: fqueue.get_nowait() # Always keep the queue fresh
-                                except: pass
-                            fqueue.put(packets)
-
-            def sending(conns):
-                try:
-                    while True:
-                        frame = fqueue.get()
-                        conns.send(len(frame).to_bytes(4, 'big') + frame)
+                            packets = packets
+                            
+                            # conns.send(len(packets).to_bytes(4, 'big') + packets)
 
                 except (BrokenPipeError, ConnectionResetError):
                     print("Client disconnected")
@@ -245,14 +250,18 @@ def tryConnect(server, host, port, input):
             threading.Thread(target=capture, daemon=True).start()
             threading.Thread(target=sending, args=(conn,), daemon=True).start()
         print("Looking For Connections")
+        serverSocket.settimeout(0.5)
         while not End[0]:
-            connId, _ = serverSocket.accept()
-            print("Client Connected")
-            threading.Thread(
-                target=streamToClient,
-                args=(connId,),
-                daemon=True
-            ).start()
+            try:
+                connId, _ = serverSocket.accept()
+                print("Client Connected")
+                threading.Thread(
+                    target=streamToClient,
+                    args=(connId,),
+                    daemon=True
+                ).start()
+            except:
+                continue
         serverSocket.close()
     else:
         clientSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -300,11 +309,17 @@ def tryConnect(server, host, port, input):
                             display_fps_counter = 0
                             display_fps_start_time = time.time()
 
+                        win_name = "Decoded Video"    
+                        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+
                         # Draw the FPS on the image before showing it
                         cv2.putText(img, display_fps_text, (10, 30), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                         
-                        cv2.imshow("Decoded Video", img)
+                        cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                        cv2.setMouseCallback(win_name, mouse_evt)
+                        
+                        cv2.imshow(win_name, img)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             break
                 except Exception as e:
