@@ -9,6 +9,7 @@ import time
 import mss
 from queue import Queue
 import av
+import cv2
 import PyNvVideoCodec as nvc
 import pygame
 
@@ -23,6 +24,10 @@ ENC_PARAMS = {
     "profile": "main",
     "multi_pass": "disabled",
     "bframes": 0,
+    "video_full_range_flag": 0,       # 0 = Limited range (Standard for video)
+    "color_primaries": 1,            # 1 = BT.709 (SDR)
+    "transfer_characteristics": 1,   # 1 = BT.709 (SDR)
+    "matrix_coefficients": 1         # 1 = BT.709 (SDR)
 }
 
 encoder = nvc.CreateEncoder(
@@ -39,7 +44,7 @@ encoder = nvc.CreateEncoder(
 
 codec_ctx = av.CodecContext.create('hevc', 'r')
 codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
-# codec_ctx.thread_type = 'SLICE'
+codec_ctx.thread_type = 'SLICE'
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -204,9 +209,30 @@ def tryConnect(server, host, port, input):
             def capture():
                 with mss.mss() as sct:
                     monitor = sct.monitors[1]
+                    TARGET_FPS = 60
+                    FRAME_TIME = 1.0 / TARGET_FPS  # 0.01666... seconds
+                    last_time = time.perf_counter()
                     while not End[0]:
+                        current_time = time.perf_counter()
+                        elapsed = current_time - last_time
+
+                        # 1. Wait until it is time for the next frame
+                        if elapsed < FRAME_TIME:
+                            # Sleep for most of the remaining time (saves CPU)
+                            # We leave a 2ms "safety margin" for the busy-wait
+                            sleep_time = (FRAME_TIME - elapsed) - 0.002
+                            if sleep_time > 0:
+                                time.sleep(sleep_time)
+
+                            # 2. Precision Busy-Wait (Spins until exactly 16.66ms)
+                            while time.perf_counter() - last_time < FRAME_TIME:
+                                pass
+                        
+                        # 3. Mark the start time for the next frame calculation
+                        last_time = time.perf_counter()
                         sct_img = sct.grab(monitor)
                         frame = np.array(sct_img) #[:, :, :3]  # RGB
+                        # frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
                         if fqueue.full():
                             print("Full")
                             try: fqueue.get_nowait() # Always keep the queue fresh
