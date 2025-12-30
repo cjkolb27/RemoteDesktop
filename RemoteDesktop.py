@@ -19,7 +19,7 @@ GPU_ID = 0
 
 ENC_PARAMS = {
     "bitrate": "18M",              # 10 Megabits per second
-    "max_bitrate": "30M",
+    "max_bitrate": "20M",
     "rc_mode": "vbr",
     "profile": "main",
     "multi_pass": "disabled",
