@@ -107,7 +107,7 @@ class MainWindow(QtWidgets.QWidget):
             dev = p.get_device_info_by_index(i)
             if self.inputString in dev['name'] and dev['hostApi'] == 0:
                 self.input = i
-            print(f"Index: {i}, Name: {dev['name']}, Host API: {dev['hostApi']}")
+            # print(f"Index: {i}, Name: {dev['name']}, Host API: {dev['hostApi']}")
 
         p.terminate()
 
@@ -208,7 +208,16 @@ def tryConnect(server, host, port, input):
             fqueue = Queue(maxsize=1)
             def capture():
                 with mss.mss() as sct:
-                    monitor = sct.monitors[1]
+                    for i, monitor in enumerate(sct.monitors):
+                        # MSS monitors[0] is the "virtual screen" (all monitors combined)
+                        # monitors[1:] are individual monitors
+                        print(f"Monitor {i}:")
+                        print(f"  x: {monitor['left']}, y: {monitor['top']}")
+                        print(f"  width: {monitor['width']}, height: {monitor['height']}")
+                        print(f"  right: {monitor['left'] + monitor['width']}, "
+                            f"bottom: {monitor['top'] + monitor['height']}")
+                        
+                    monitor = sct.monitors[2]
                     TARGET_FPS = 60
                     FRAME_TIME = 1.0 / TARGET_FPS  # 0.01666... seconds
                     last_time = time.perf_counter()
@@ -232,6 +241,9 @@ def tryConnect(server, host, port, input):
                         last_time = time.perf_counter()
                         sct_img = sct.grab(monitor)
                         frame = np.array(sct_img) #[:, :, :3]  # RGB
+
+                        
+                        #frame = np.frombuffer(sct_img.bgra, dtype=np.uint8).reshape((HEIGHT, WIDTH, 4)).copy()
                         # frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
                         if fqueue.full():
                             print("Full")
@@ -261,10 +273,21 @@ def tryConnect(server, host, port, input):
                     pass
 
                 finally:
+                    End[0] = True
                     conns.close()
+
+            def input(conns):
+                try:
+                    while not End[0]:
+                        data = conns.recv(128).decode()
+                        print(data)
+                except Exception as e:
+                    End[0] = True
 
             threading.Thread(target=capture, daemon=True).start()
             threading.Thread(target=sending, args=(conn,), daemon=True).start()
+            threading.Thread(target=input, args=(conn,), daemon=True).start()
+
         print("Looking For Connections")
         serverSocket.settimeout(0.5)
         while not End[0]:
@@ -315,12 +338,20 @@ def tryConnect(server, host, port, input):
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_q:
                             End[0] = True
-                    elif event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.MOUSEMOTION:
+                        clientSocket.send(f"Down: {event.key}".encode())
+                    elif event.type == pygame.KEYUP:
+                        clientSocket.send(f"Up: {event.key}".encode())
+                    elif event.type == pygame.MOUSEMOTION:
                         # PyGame gives you x, y directly
                         mx, my = pygame.mouse.get_pos()
                         # Scale coordinates for your 1440p server
                         server_x = int(mx * (2560 / WIDTH))
                         server_y = int(my * (1440 / HEIGHT))
+                        clientSocket.send(f"{server_x}, {server_y}".encode())
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        clientSocket.send(f"M_DOWN: {pygame.mouse.get_pressed()}".encode())
+                    elif event.type == pygame.MOUSEBUTTONUP:
+                        clientSocket.send(f"M_UP: {pygame.mouse.get_pressed()}".encode())
                 size = recv_exact(clientSocket, 4)
                 if not size:
                     break
