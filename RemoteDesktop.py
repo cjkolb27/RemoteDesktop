@@ -279,8 +279,12 @@ def tryConnect(server, host, port, input):
             def input(conns):
                 try:
                     while not End[0]:
-                        data = conns.recv(128).decode()
-                        print(data)
+                        size = recv_exact(clientSocket, 4)
+                        if not size:
+                            break
+                        size = int.from_bytes(size, 'big')
+                        data = recv_exact(clientSocket, size)
+                        print(data.decode())
                 except Exception as e:
                     End[0] = True
 
@@ -336,22 +340,21 @@ def tryConnect(server, host, port, input):
                     if event.type == pygame.QUIT:
                         End[0] = True
                     elif event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_q:
-                            End[0] = True
-                        clientSocket.send(f"Down: {event.key}".encode())
+                        string = f"KD:{event.scancode}".encode()
+                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.KEYUP:
-                        clientSocket.send(f"Up: {event.key}".encode())
+                        string = f"KU:{event.scancode}".encode()
+                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEMOTION:
-                        # PyGame gives you x, y directly
                         mx, my = pygame.mouse.get_pos()
-                        # Scale coordinates for your 1440p server
-                        server_x = int(mx * (2560 / WIDTH))
-                        server_y = int(my * (1440 / HEIGHT))
-                        clientSocket.send(f"{server_x}, {server_y}".encode())
+                        string = f"M:{mx}:{my}".encode()
+                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEBUTTONDOWN:
-                        clientSocket.send(f"M_DOWN: {pygame.mouse.get_pressed()}".encode())
+                        string = f"MD:{pygame.mouse.get_pressed()}".encode()
+                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEBUTTONUP:
-                        clientSocket.send(f"M_UP: {pygame.mouse.get_pressed()}".encode())
+                        string = f"MU:{pygame.mouse.get_pressed()}".encode()
+                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                 size = recv_exact(clientSocket, 4)
                 if not size:
                     break
