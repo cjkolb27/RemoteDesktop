@@ -12,6 +12,8 @@ import av
 import cv2
 import PyNvVideoCodec as nvc
 import pygame
+import keyboard
+from pynput.keyboard import Controller, Key
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 30
@@ -45,6 +47,15 @@ encoder = nvc.CreateEncoder(
 codec_ctx = av.CodecContext.create('hevc', 'r')
 codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
 codec_ctx.thread_type = 'SLICE'
+
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("Socket closed")
+        data += chunk
+    return data
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -217,7 +228,7 @@ def tryConnect(server, host, port, input):
                         print(f"  right: {monitor['left'] + monitor['width']}, "
                             f"bottom: {monitor['top'] + monitor['height']}")
                         
-                    monitor = sct.monitors[2]
+                    monitor = sct.monitors[3]
                     TARGET_FPS = 60
                     FRAME_TIME = 1.0 / TARGET_FPS  # 0.01666... seconds
                     last_time = time.perf_counter()
@@ -277,15 +288,39 @@ def tryConnect(server, host, port, input):
                     conns.close()
 
             def input(conns):
+                kb = Controller()
+                def key_down(code):
+                    #pydirectinput.keyDown(code)
+                    keyboard.press(code)
+                    #win32api.keybd_event(0, code, win32con.KEYEVENTF_SCANCODE, 0)
+
+                def key_up(code):
+                    #pydirectinput.keyUp(code)
+                    keyboard.release(code)
+                    #win32api.keybd_event(0, code, win32con.KEYEVENTF_SCANCODE | win32con.KEYEVENTF_KEYUP, 0)
+
                 try:
                     while not End[0]:
-                        size = recv_exact(clientSocket, 4)
+                        size = recv_exact(conns, 4)
                         if not size:
                             break
                         size = int.from_bytes(size, 'big')
-                        data = recv_exact(clientSocket, size)
-                        print(data.decode())
+                        data = recv_exact(conns, size).decode()
+                        print(data)
+
+                        split = data.split(":")
+                        print(split)
+                        if split[0] == "KD":
+                            #continue
+                            kb.press(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
+                            #key_down(split[1])
+                        elif split[0] == "KU":
+                            #continue
+                            kb.release(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
+                            #key_up(split[1])
+
                 except Exception as e:
+                    print(e)
                     End[0] = True
 
             threading.Thread(target=capture, daemon=True).start()
@@ -315,15 +350,6 @@ def tryConnect(server, host, port, input):
         except OSError:
             return
         print("Server found")
-
-        def recv_exact(sock, size):
-            data = b""
-            while len(data) < size:
-                chunk = sock.recv(size - len(data))
-                if not chunk:
-                    raise ConnectionError("Socket closed")
-                data += chunk
-            return data
         
         try:
             pygame.init()
@@ -340,11 +366,13 @@ def tryConnect(server, host, port, input):
                     if event.type == pygame.QUIT:
                         End[0] = True
                     elif event.type == pygame.KEYDOWN:
-                        string = f"KD:{event.scancode}".encode()
-                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        if event.unicode:
+                            string = f"KD:{event.unicode}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.KEYUP:
-                        string = f"KU:{event.scancode}".encode()
-                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        if event.unicode:
+                            string = f"KU:{event.unicode}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEMOTION:
                         mx, my = pygame.mouse.get_pos()
                         string = f"M:{mx}:{my}".encode()
@@ -390,6 +418,8 @@ def tryConnect(server, host, port, input):
     return
 
 if __name__ == "__main__":
+    for key in keyboard._os_keyboard.scan_code_to_vk:
+        keyboard.release(key)
     End = [True]
     End[0] = False
     rate = 44100
