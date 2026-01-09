@@ -14,13 +14,14 @@ import PyNvVideoCodec as nvc
 import pygame
 import keyboard
 from pynput.keyboard import Controller, Key
+import bettercam
 
 WIDTH, HEIGHT = 2560, 1440
-FPS = 30
+FPS = 60
 GPU_ID = 0
 
 ENC_PARAMS = {
-    "bitrate": "18M",              # 10 Megabits per second
+    "bitrate": "20M",              # 10 Megabits per second
     "max_bitrate": "20M",
     "rc_mode": "vbr",
     "profile": "main",
@@ -40,7 +41,7 @@ encoder = nvc.CreateEncoder(
     gop=60,
     usecpuinputbuffer=True,
     fps=60,
-    preset="P2",
+    preset="P1",
     **ENC_PARAMS
 )
 
@@ -218,49 +219,16 @@ def tryConnect(server, host, port, input):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             fqueue = Queue(maxsize=1)
             def capture():
-                with mss.mss() as sct:
-                    for i, monitor in enumerate(sct.monitors):
-                        # MSS monitors[0] is the "virtual screen" (all monitors combined)
-                        # monitors[1:] are individual monitors
-                        print(f"Monitor {i}:")
-                        print(f"  x: {monitor['left']}, y: {monitor['top']}")
-                        print(f"  width: {monitor['width']}, height: {monitor['height']}")
-                        print(f"  right: {monitor['left'] + monitor['width']}, "
-                            f"bottom: {monitor['top'] + monitor['height']}")
-                        
-                    monitor = sct.monitors[3]
-                    TARGET_FPS = 60
-                    FRAME_TIME = 1.0 / TARGET_FPS  # 0.01666... seconds
-                    last_time = time.perf_counter()
-                    while not End[0]:
-                        current_time = time.perf_counter()
-                        elapsed = current_time - last_time
+                camera = bettercam.create(device_idx=0, output_color="BGRA")
+                camera.start(target_fps=61, video_mode=True)
 
-                        # 1. Wait until it is time for the next frame
-                        if elapsed < FRAME_TIME:
-                            # Sleep for most of the remaining time (saves CPU)
-                            # We leave a 2ms "safety margin" for the busy-wait
-                            sleep_time = (FRAME_TIME - elapsed) - 0.002
-                            if sleep_time > 0:
-                                time.sleep(sleep_time)
-
-                            # 2. Precision Busy-Wait (Spins until exactly 16.66ms)
-                            while time.perf_counter() - last_time < FRAME_TIME:
-                                pass
-                        
-                        # 3. Mark the start time for the next frame calculation
-                        last_time = time.perf_counter()
-                        sct_img = sct.grab(monitor)
-                        frame = np.array(sct_img) #[:, :, :3]  # RGB
-
-                        
-                        #frame = np.frombuffer(sct_img.bgra, dtype=np.uint8).reshape((HEIGHT, WIDTH, 4)).copy()
-                        # frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                        if fqueue.full():
-                            print("Full")
-                            try: fqueue.get_nowait() # Always keep the queue fresh
-                            except: pass
-                        fqueue.put(frame)
+                while not End[0]:
+                    frame = camera.get_latest_frame()
+                    if fqueue.full():
+                        print("Full")
+                        try: fqueue.get_nowait() # Always keep the queue fresh
+                        except: pass
+                    fqueue.put(frame)
 
             def sending(conns):
                 try:
