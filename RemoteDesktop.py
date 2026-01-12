@@ -22,6 +22,8 @@ WIDTH, HEIGHT = 2560, 1440
 FPS = 60
 GPU_ID = 0
 
+print(f"{pygame.K_UP} {pygame.K_DOWN} {pygame.K_LEFT} {pygame.K_RIGHT}")
+
 ENC_PARAMS = {
     "bitrate": "10M",              # 10 Megabits per second
     "max_bitrate": "20M",
@@ -304,10 +306,10 @@ def tryConnect(server, host, port, input):
                             if left and not le:
                                 le = True
                                 m.press(Button.left)
-                            if middle and not mi:
+                            elif middle and not mi:
                                 mi = True
                                 m.press(Button.middle)
-                            if right and not ri:
+                            elif right and not ri:
                                 ri = True
                                 m.press(Button.right)
                         elif split[0] == "MU":
@@ -316,13 +318,13 @@ def tryConnect(server, host, port, input):
                             if not left and le:
                                 le = False
                                 m.release(Button.left)
-                            if not middle and mi:
+                            elif not middle and mi:
                                 mi = False
                                 m.release(Button.middle)
-                            if not right and ri:
+                            elif not right and ri:
                                 ri = False
                                 m.release(Button.right)
-                            print(keys)
+                        
 
                 except Exception as e:
                     print(e)
@@ -371,11 +373,53 @@ def tryConnect(server, host, port, input):
                     if event.type == pygame.QUIT:
                         End[0] = True
                     elif event.type == pygame.KEYDOWN:
-                        if event.unicode:
+                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                            string = "CD:S".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                            string = "CD:A".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_TAB:
+                            string = "CD:T".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                            string = "CD:C".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_CAPSLOCK:
+                            string = "CD:CA".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                            string = f"CD:F{event.key - pygame.K_F1 + 1}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                            string = f"CD:A{event.key - pygame.K_RIGHT + 1}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.unicode:
                             string = f"KD:{event.unicode}".encode()
                             clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.KEYUP:
-                        if event.unicode:
+                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                            string = "CU:S".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                            string = "CU:A".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_TAB:
+                            string = "CU:T".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                            string = "CU:C".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_CAPSLOCK:
+                            string = "CU:CA".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                            string = f"CU:F{event.key - pygame.K_F1 + 1}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                            string = f"CU:A{event.key - pygame.K_RIGHT + 1}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.unicode:
                             string = f"KU:{event.unicode}".encode()
                             clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEMOTION:
@@ -383,9 +427,22 @@ def tryConnect(server, host, port, input):
                         string = f"M:{mx}:{my}".encode()
                         clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                     elif event.type == pygame.MOUSEBUTTONDOWN:
-                        string = f"MD:{pygame.mouse.get_pressed()}".encode()
-                        clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
-                    elif event.type == pygame.MOUSEBUTTONUP:
+                        if event.button == 4:
+                            string = "SU".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 5:
+                            string = "SD".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 6:
+                            string = "B".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 7:
+                            string = "F".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                        else:
+                            string = f"MD:{pygame.mouse.get_pressed()}".encode()
+                            clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
+                    elif event.type == pygame.MOUSEBUTTONUP and event.button != 4 and event.button != 5 and event.button != 6 and event.button != 7:
                         string = f"MU:{pygame.mouse.get_pressed()}".encode()
                         clientSocket.sendall(len(string).to_bytes(4, 'big') + string)
                 size = recv_exact(clientSocket, 4)
