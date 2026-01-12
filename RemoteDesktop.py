@@ -14,14 +14,16 @@ import PyNvVideoCodec as nvc
 import pygame
 import keyboard
 from pynput.keyboard import Controller, Key
+from pynput.mouse import Button, Controller as MouseController
 import bettercam
+import ast
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 60
 GPU_ID = 0
 
 ENC_PARAMS = {
-    "bitrate": "20M",              # 10 Megabits per second
+    "bitrate": "10M",              # 10 Megabits per second
     "max_bitrate": "20M",
     "rc_mode": "vbr",
     "profile": "main",
@@ -220,7 +222,7 @@ def tryConnect(server, host, port, input):
             fqueue = Queue(maxsize=1)
             def capture():
                 camera = bettercam.create(device_idx=0, output_color="BGRA")
-                camera.start(target_fps=61, video_mode=True)
+                camera.start(target_fps=60, video_mode=True)
 
                 while not End[0]:
                     frame = camera.get_latest_frame()
@@ -257,6 +259,10 @@ def tryConnect(server, host, port, input):
 
             def input(conns):
                 kb = Controller()
+                m = MouseController()
+                le = False
+                mi = False
+                ri = False
                 def key_down(code):
                     #pydirectinput.keyDown(code)
                     keyboard.press(code)
@@ -278,14 +284,45 @@ def tryConnect(server, host, port, input):
 
                         split = data.split(":")
                         print(split)
-                        if split[0] == "KD":
+                        if split[0] == "M":
+                            m.position = (int(split[1]), int(split[2]))
+                        elif split[0] == "KD":
                             #continue
+                            if len(split) > 2:
+                                split[1] = ':'
                             kb.press(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
                             #key_down(split[1])
                         elif split[0] == "KU":
                             #continue
+                            if len(split) > 2:
+                                split[1] = ':'
                             kb.release(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
                             #key_up(split[1])
+                        elif split[0] == "MD":
+                            keys = ast.literal_eval(split[1])
+                            left, middle, right = keys
+                            if left and not le:
+                                le = True
+                                m.press(Button.left)
+                            if middle and not mi:
+                                mi = True
+                                m.press(Button.middle)
+                            if right and not ri:
+                                ri = True
+                                m.press(Button.right)
+                        elif split[0] == "MU":
+                            keys = ast.literal_eval(split[1])
+                            left, middle, right = keys
+                            if not left and le:
+                                le = False
+                                m.release(Button.left)
+                            if not middle and mi:
+                                mi = False
+                                m.release(Button.middle)
+                            if not right and ri:
+                                ri = False
+                                m.release(Button.right)
+                            print(keys)
 
                 except Exception as e:
                     print(e)
