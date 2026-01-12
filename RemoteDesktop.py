@@ -265,15 +265,34 @@ def tryConnect(server, host, port, input):
                 le = False
                 mi = False
                 ri = False
-                def key_down(code):
-                    #pydirectinput.keyDown(code)
-                    keyboard.press(code)
-                    #win32api.keybd_event(0, code, win32con.KEYEVENTF_SCANCODE, 0)
-
-                def key_up(code):
-                    #pydirectinput.keyUp(code)
-                    keyboard.release(code)
-                    #win32api.keybd_event(0, code, win32con.KEYEVENTF_SCANCODE | win32con.KEYEVENTF_KEYUP, 0)
+                shift = False
+                alt = False
+                tab = False
+                ctrl = False
+                cap = False
+                cd_map = {
+                    "S": Key.shift,
+                    "A": Key.alt,
+                    "T": Key.tab,
+                    "C": Key.ctrl,
+                    "CA": Key.caps_lock,
+                    "F1": Key.f1,
+                    "F2": Key.f2,
+                    "F3": Key.f3,
+                    "F4": Key.f4,
+                    "F5": Key.f5,
+                    "F6": Key.f6,
+                    "F7": Key.f7,
+                    "F8": Key.f8,
+                    "F9": Key.f9,
+                    "F10": Key.f10,
+                    "F11": Key.f11,
+                    "F12": Key.f12,
+                    "A1": Key.right,
+                    "A2": Key.left,
+                    "A3": Key.down,
+                    "A4": Key.up
+                }
 
                 try:
                     while not End[0]:
@@ -289,17 +308,13 @@ def tryConnect(server, host, port, input):
                         if split[0] == "M":
                             m.position = (int(split[1]), int(split[2]))
                         elif split[0] == "KD":
-                            #continue
                             if len(split) > 2:
                                 split[1] = ':'
                             kb.press(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
-                            #key_down(split[1])
                         elif split[0] == "KU":
-                            #continue
                             if len(split) > 2:
                                 split[1] = ':'
                             kb.release(getattr(Key, split[1]) if split[1] in Key.__members__ else split[1])
-                            #key_up(split[1])
                         elif split[0] == "MD":
                             keys = ast.literal_eval(split[1])
                             left, middle, right = keys
@@ -324,7 +339,20 @@ def tryConnect(server, host, port, input):
                             elif not right and ri:
                                 ri = False
                                 m.release(Button.right)
-                        
+                        elif split[0] == "SU":
+                            m.scroll(0, 1)
+                        elif split[0] == "SD":
+                            m.scroll(0, -1)
+                        elif split[0] == "B":
+                            m.press(Button.x1)
+                            m.release(Button.x1)
+                        elif split[0] == "F":
+                            m.press(Button.x2)
+                            m.release(Button.x2)
+                        elif split[0] == "CD":
+                            kb.press(cd_map[split[1]])
+                        elif split[0] == "CU":
+                            kb.release(cd_map[split[1]])
 
                 except Exception as e:
                     print(e)
