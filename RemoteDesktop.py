@@ -6,10 +6,8 @@ from pathlib import Path
 import pyaudio
 import numpy as np
 import time
-import mss
 from queue import Queue
 import av
-import cv2
 import PyNvVideoCodec as nvc
 import pygame
 import keyboard
@@ -25,7 +23,7 @@ GPU_ID = 0
 print(f"{pygame.K_UP} {pygame.K_DOWN} {pygame.K_LEFT} {pygame.K_RIGHT}")
 
 ENC_PARAMS = {
-    "bitrate": "10M",              # 10 Megabits per second
+    "bitrate": "20M",              # 10 Megabits per second
     "max_bitrate": "20M",
     "rc_mode": "vbr",
     "profile": "main",
