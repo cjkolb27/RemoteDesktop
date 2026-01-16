@@ -440,94 +440,88 @@ def tryConnect(server, host, port, input, encode):
             )
 
             fqueue = Queue(maxsize=1)
+            equeue = Queue(maxsize=2)
+            iqueue = Queue(maxsize=100)
 
             def inputs(cs):
-                target_fps = 120
-                frame_duration = 1.0 / target_fps
                 while not End[0]:
-                    start_time = time.perf_counter()
-                    for event in pygame.event.get():
-                        if event.type == pygame.QUIT:
-                            End[0] = True
-                        elif event.type == pygame.KEYDOWN:
-                            if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
-                                string = "CD:S".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
-                                string = "CD:A".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_TAB:
-                                string = "CD:T".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
-                                string = "CD:C".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_CAPSLOCK:
-                                string = "CD:CA".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif pygame.K_F1 <= event.key <= pygame.K_F12:
-                                string = f"CD:F{event.key - pygame.K_F1 + 1}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
-                                string = f"CD:A{event.key - pygame.K_RIGHT + 1}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.unicode:
-                                string = f"KD:{event.unicode}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.type == pygame.KEYUP:
-                            if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
-                                string = "CU:S".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
-                                string = "CU:A".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_TAB:
-                                string = "CU:T".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
-                                string = "CU:C".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.key == pygame.K_CAPSLOCK:
-                                string = "CU:CA".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif pygame.K_F1 <= event.key <= pygame.K_F12:
-                                string = f"CU:F{event.key - pygame.K_F1 + 1}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
-                                string = f"CU:A{event.key - pygame.K_RIGHT + 1}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.unicode:
-                                string = f"KU:{event.unicode}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.type == pygame.MOUSEMOTION:
-                            mx, my = pygame.mouse.get_pos()
-                            string = f"M:{mx}:{my}".encode()
+                    event = iqueue.get()
+                    if event.type == pygame.QUIT:
+                        End[0] = True
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                            string = "CD:S".encode()
                             cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.type == pygame.MOUSEBUTTONDOWN:
-                            if event.button == 4:
-                                string = "SU".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.button == 5:
-                                string = "SD".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.button == 6:
-                                string = "B".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            elif event.button == 7:
-                                string = "F".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                            else:
-                                string = f"MD:{pygame.mouse.get_pressed()}".encode()
-                                cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.type == pygame.MOUSEBUTTONUP and event.button != 4 and event.button != 5 and event.button != 6 and event.button != 7:
-                            string = f"MU:{pygame.mouse.get_pressed()}".encode()
+                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                            string = "CD:A".encode()
                             cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    elapsed_time = time.perf_counter() - start_time
-    
-                    # Sleep only for the REMAINING time
-                    sleep_time = frame_duration - elapsed_time
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+                        elif event.key == pygame.K_TAB:
+                            string = "CD:T".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                            string = "CD:C".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_CAPSLOCK:
+                            string = "CD:CA".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                            string = f"CD:F{event.key - pygame.K_F1 + 1}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                            string = f"CD:A{event.key - pygame.K_RIGHT + 1}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.unicode:
+                            string = f"KD:{event.unicode}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                    elif event.type == pygame.KEYUP:
+                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                            string = "CU:S".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                            string = "CU:A".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_TAB:
+                            string = "CU:T".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                            string = "CU:C".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.key == pygame.K_CAPSLOCK:
+                            string = "CU:CA".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                            string = f"CU:F{event.key - pygame.K_F1 + 1}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                            string = f"CU:A{event.key - pygame.K_RIGHT + 1}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.unicode:
+                            string = f"KU:{event.unicode}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                    elif event.type == pygame.MOUSEMOTION:
+                        mx, my = pygame.mouse.get_pos()
+                        string = f"M:{mx}:{my}".encode()
+                        cs.sendall(len(string).to_bytes(4, 'big') + string)
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        if event.button == 4:
+                            string = "SU".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 5:
+                            string = "SD".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 6:
+                            string = "B".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.button == 7:
+                            string = "F".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        else:
+                            string = f"MD:{pygame.mouse.get_pressed()}".encode()
+                            cs.sendall(len(string).to_bytes(4, 'big') + string)
+                    elif event.type == pygame.MOUSEBUTTONUP and event.button != 4 and event.button != 5 and event.button != 6 and event.button != 7:
+                        string = f"MU:{pygame.mouse.get_pressed()}".encode()
+                        cs.sendall(len(string).to_bytes(4, 'big') + string)
+                    iqueue.task_done()
             
             def stream(cs):
                 count = 0
@@ -550,14 +544,8 @@ def tryConnect(server, host, port, input, encode):
                 except OSError:
                     End[0] = True
 
-            threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
-            threading.Thread(target=stream, args=(clientSocket,), daemon=True).start()
-            
-            display_fps_start_time = time.time()
-            display_fps_counter = 0
-            display_fps_text = "FPS: 0"
-            while not End[0]:
-                try:
+            def decoding():
+                while not End[0]:
                     raw = fqueue.get()
                     bitstream = np.frombuffer(raw, dtype=np.uint8)
                     packet_meta = nvc.PacketData()
@@ -566,7 +554,24 @@ def tryConnect(server, host, port, input, encode):
                     packet_meta.pts = 0 # or your actual timestamp
                     for frame in nvdec.Decode(packet_meta):
                         cpu_nv12 = np.from_dlpack(frame)
-                        bgr = cv2.cvtColor(cpu_nv12, cv2.COLOR_YUV2RGB_NV12)
+                        equeue.put(cpu_nv12)
+                        
+                    fqueue.task_done()
+                
+
+            threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
+            threading.Thread(target=stream, args=(clientSocket,), daemon=True).start()
+            threading.Thread(target=decoding, args=(), daemon=True).start()
+            
+            display_fps_start_time = time.time()
+            display_fps_counter = 0
+            display_fps_text = "FPS: 0"
+            while not End[0]:
+                try:
+                    for event in pygame.event.get():
+                        iqueue.put(event)
+                    if not equeue.empty():
+                        bgr = cv2.cvtColor(equeue.get(), cv2.COLOR_YUV2RGB_NV12)
                         h, w, _ = bgr.shape
                         surface = pygame.image.frombuffer(bgr, (w, h), 'BGR')
                         display_fps_counter += 1
@@ -579,7 +584,6 @@ def tryConnect(server, host, port, input, encode):
                         fps_surface = font.render(display_fps_text, True, (0, 255, 0))
                         screen.blit(fps_surface, (10, 10))
                         pygame.display.update()
-                    fqueue.task_done()
                 except Exception as e:
                     print(f"Error: {e}")
                     fqueue.task_done()
