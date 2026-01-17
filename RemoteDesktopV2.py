@@ -7,7 +7,6 @@ import pyaudio
 import numpy as np
 import time
 from queue import Queue
-import av
 import PyNvVideoCodec as nvc
 import pygame
 import keyboard
@@ -20,37 +19,6 @@ import cv2
 WIDTH, HEIGHT = 2560, 1440
 FPS = 60
 GPU_ID = 0
-
-print(f"{pygame.K_UP} {pygame.K_DOWN} {pygame.K_LEFT} {pygame.K_RIGHT}")
-
-# ENC_PARAMS = {
-#     "bitrate": "20M",              # 10 Megabits per second
-#     "max_bitrate": "20M",
-#     "rc_mode": "vbr",
-#     "profile": "main",
-#     "multi_pass": "disabled",
-#     "bframes": 0,
-#     "video_full_range_flag": 0,       # 0 = Limited range (Standard for video)
-#     "color_primaries": 1,            # 1 = BT.709 (SDR)
-#     "transfer_characteristics": 1,   # 1 = BT.709 (SDR)
-#     "matrix_coefficients": 1         # 1 = BT.709 (SDR)
-# }
-
-# encoder = nvc.CreateEncoder(
-#     width=WIDTH,
-#     height=HEIGHT,
-#     fmt="ABGR",
-#     codec="hevc",
-#     gop=60,
-#     usecpuinputbuffer=True,
-#     fps=60,
-#     preset="P1",
-#     **ENC_PARAMS
-# )
-
-codec_ctx = av.CodecContext.create('hevc', 'r')
-codec_ctx.flags |= getattr(av.codec.context.Flags, 'LOW_DELAY', 0x0008)
-codec_ctx.thread_type = 'SLICE'
 
 def recv_exact(sock, size):
     data = b""
