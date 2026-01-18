@@ -14,11 +14,13 @@ from pynput.keyboard import Controller, Key
 from pynput.mouse import Button, Controller as MouseController
 import bettercam
 import ast
-import cv2
+from collections import deque
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 60
 GPU_ID = 0
+
+print(dir(nvc.OutputColorType))
 
 def recv_exact(sock, size):
     data = b""
@@ -401,15 +403,18 @@ def tryConnect(server, host, port, input, encode):
             nvdec = nvc.CreateDecoder(
                 gpuid=0,
                 codec=nvc.cudaVideoCodec.AV1,
+                outputColorType=nvc.OutputColorType.RGB,
                 cudacontext=0,
                 cudastream=0,
                 latency=nvc.DisplayDecodeLatencyType.ZERO,
                 usedevicememory=False
             )
 
-            fqueue = Queue(maxsize=1)
-            equeue = Queue(maxsize=2)
+            fqueue = Queue(maxsize=100)
+            equeue = Queue(maxsize=20)
             iqueue = Queue(maxsize=100)
+
+            fs = [0.0, 0.0, 0.0]
 
             def inputs(cs):
                 while not End[0]:
@@ -495,25 +500,32 @@ def tryConnect(server, host, port, input, encode):
                 count = 0
                 try:
                     while not End[0]:
+                        start = time.perf_counter()
                         size = recv_exact(cs, 4)
                         if not size:
                             break
+                        # start = time.perf_counter()
                         size = int.from_bytes(size, 'big')
                         packets = recv_exact(cs, size)
                         raw = bytes(packets)
                         if not raw: # Skip empty packets
                             continue
-                        if fqueue.full():
-                            print(f"Full {count}")
-                            count += 1
-                            try: fqueue.join()
-                            except: pass
+                        # print(f"Internet time: {time.perf_counter() - start}")
+                        # if fqueue.full():
+                        #     print(f"Internet Full {count}")
+                        #     count += 1
+                        #     try: fqueue.join()
+                        #     except: pass
                         fqueue.put(raw)
+                        fs[0] = time.perf_counter() - start
                 except OSError:
                     End[0] = True
 
             def decoding():
+                count = 0
                 while not End[0]:
+                    # ADD A THREAD LOCK FOR GETTING USING deque
+                    start = time.perf_counter()
                     raw = fqueue.get()
                     bitstream = np.frombuffer(raw, dtype=np.uint8)
                     packet_meta = nvc.PacketData()
@@ -521,40 +533,75 @@ def tryConnect(server, host, port, input, encode):
                     packet_meta.bsl = bitstream.nbytes
                     packet_meta.pts = 0 # or your actual timestamp
                     for frame in nvdec.Decode(packet_meta):
-                        cpu_nv12 = np.from_dlpack(frame)
-                        equeue.put(cpu_nv12)
-                        
-                    fqueue.task_done()
-                
+                        cpu_abgr = np.from_dlpack(frame)
+                        # if equeue.full():
+                        #     print(f"Decode Full {count}")
+                        #     count += 1
+                        #     try: equeue.join()
+                        #     except: pass
+                        equeue.put(cpu_abgr)
+                    # print(f"Decoding time: {time.perf_counter() - start}")
+                    fs[1] = time.perf_counter() - start
 
             threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
             threading.Thread(target=stream, args=(clientSocket,), daemon=True).start()
             threading.Thread(target=decoding, args=(), daemon=True).start()
             
-            display_fps_start_time = time.time()
+            display_fps_start_time = time.perf_counter()
             display_fps_counter = 0
             display_fps_text = "FPS: 0"
+            surface = None
+            max_length = 60
+            f0 = deque(maxlen=max_length)
+            f1 = deque(maxlen=max_length)
+            f2 = deque(maxlen=max_length)
+            fps_surface = font.render("", True, (0, 255, 0))
+            clock = pygame.time.Clock()
+            TARGET_FPS = 125
             while not End[0]:
                 try:
+                    # clock.tick(TARGET_FPS)
                     for event in pygame.event.get():
                         iqueue.put(event)
-                    if not equeue.empty():
-                        bgr = cv2.cvtColor(equeue.get(), cv2.COLOR_YUV2RGB_NV12)
-                        h, w, _ = bgr.shape
-                        surface = pygame.image.frombuffer(bgr, (w, h), 'BGR')
-                        display_fps_counter += 1
-                        if (time.time() - display_fps_start_time) > 1.0:
-                            display_fps_text = f"FPS: {display_fps_counter}"
-                            display_fps_counter = 0
-                            display_fps_start_time = time.time()
+                    # start = time.perf_counter()
+                    # bgr = cv2.cvtColor(equeue.get(), cv2.COLOR_YUV2RGB_NV12)
+                    # if equeue.qsize() < 1:
+                    #     continue
+                    while equeue.qsize() > 1:
+                        equeue.get_nowait()
+                    bgr = equeue.get()
+                    if bgr is None:
+                        continue
+                    start = time.perf_counter()
+                    # print(bgr.shape)
+                    h, w, _ = bgr.shape
+                    # if surface is None:
+                    #     print(f"{w, h}")
+                    #     surface = pygame.Surface((w, h))
 
-                        screen.blit(surface, (0, 0)) 
-                        fps_surface = font.render(display_fps_text, True, (0, 255, 0))
-                        screen.blit(fps_surface, (10, 10))
-                        pygame.display.update()
+                    surface = pygame.image.frombuffer(bgr, (w, h), 'BGR')
+                    display_fps_counter += 1
+                    if (time.perf_counter() - display_fps_start_time) > 1.0:
+                        display_fps_text = f"FPS: {display_fps_counter}"
+                        display_fps_counter = 0
+                        display_fps_start_time = time.perf_counter()
+
+                    screen.blit(surface, (0, 0))
+                    f0.append(fs[0])
+                    f1.append(fs[1])
+                    f2.append(fs[2])
+                    if len(f1) == f1.maxlen:
+                        fps_surface = font.render(f"{display_fps_text} Internet {fqueue.qsize()}: {round(sum(f0) / len(f0), 5)}, Decoding {equeue.qsize()}: {round(sum(f1) / len(f1), 5)}, Displaying: {round(sum(f2) / len(f2), 5)}", True, (0, 255, 0), (0, 0, 0))
+                        f0 = deque(maxlen=max_length)
+                        f1 = deque(maxlen=max_length)
+                        f2 = deque(maxlen=max_length)
+                    screen.blit(fps_surface, (10, 10))
+                    pygame.display.update()
+                    fs[2] = time.perf_counter() - start
+                    # pygame.display.flip()
+                    # print(f"Display frame time: {time.perf_counter() - start}")
                 except Exception as e:
                     print(f"Error: {e}")
-                    fqueue.task_done()
                     continue
 
         finally:
