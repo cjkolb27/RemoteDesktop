@@ -22,14 +22,27 @@ GPU_ID = 0
 
 print(dir(nvc.OutputColorType))
 
+# def recv_exact(sock, size):
+#     data = b""
+#     while len(data) < size:
+#         chunk = sock.recv(size - len(data))
+#         if not chunk:
+#             raise ConnectionError("Socket closed")
+#         data += chunk
+#     return data
+
 def recv_exact(sock, size):
-    data = b""
-    while len(data) < size:
-        chunk = sock.recv(size - len(data))
-        if not chunk:
+    # Pre-allocate the memory once
+    view = memoryview(bytearray(size))
+    pos = 0
+    while pos < size:
+        # sock.recv_into reads directly into the pre-allocated buffer
+        # No 'data += chunk' means NO new objects are created
+        nbytes = sock.recv_into(view[pos:], size - pos)
+        if not nbytes:
             raise ConnectionError("Socket closed")
-        data += chunk
-    return data
+        pos += nbytes
+    return view.tobytes() # Or return memoryview for even more speed
 
 # Dummy backend – replace with real logic
 class RemoteStreamer(QtCore.QObject):
@@ -220,11 +233,17 @@ def tryConnect(server, host, port, input, encode):
             def sending(conns):
                 try:
                     ENC_PARAMS = {
-                        "bitrate": "20M",
-                        "rc": "vbr",                # CBR is more stable for AV1 networking
+                        "bitrate": "50M",
+                        "max_bitrate": "55M",
+                        "vbv_buffer_size": "2M",
+                        "rc": "cbr",                # CBR is more stable for AV1 networking
                         "tuning_info": "low_latency",
                         "repeat_seq_header": "1",   # Added for AV1
-                        "bframes": "0",             # Added to ensure zero-latency
+                        "aw_mode": "2",
+                        "temporal_aq": "1",
+                        "instra_refresh": "1",
+                        "multipass": "fullres",
+                        "insra_refresh_cnt":"480",
                     }
 
                     encoder = nvc.CreateEncoder(
@@ -232,10 +251,10 @@ def tryConnect(server, host, port, input, encode):
                         height=HEIGHT,
                         fmt="ABGR",
                         codec="av1",
-                        gop=60,
+                        gop=0,
                         usecpuinputbuffer=True,
                         fps=120,
-                        preset="P1",
+                        preset="P3",
                         **ENC_PARAMS
                     )
                     fps_start_time = time.time()
@@ -304,7 +323,7 @@ def tryConnect(server, host, port, input, encode):
 
                 try:
                     while not End[0]:
-                        size = recv_exact(conns, 4)
+                        size = conns.recv(4)
                         if not size:
                             break
                         size = int.from_bytes(size, 'big')
@@ -410,123 +429,116 @@ def tryConnect(server, host, port, input, encode):
                 usedevicememory=False
             )
 
-            fqueue = Queue(maxsize=100)
-            equeue = Queue(maxsize=20)
-            iqueue = Queue(maxsize=100)
-
             fs = [0.0, 0.0, 0.0]
 
             def inputs(cs):
                 while not End[0]:
-                    event = iqueue.get()
-                    if event.type == pygame.QUIT:
-                        End[0] = True
-                    elif event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
-                            string = "CD:S".encode()
+                    for event in iqueue.get():
+                        # event = iqueue.get()
+                        if event.type == pygame.QUIT:
+                            End[0] = True
+                        elif event.type == pygame.KEYDOWN:
+                            if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                                string = "CD:S".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                                string = "CD:A".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_TAB:
+                                string = "CD:T".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                                string = "CD:C".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_CAPSLOCK:
+                                string = "CD:CA".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                                string = f"CD:F{event.key - pygame.K_F1 + 1}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                                string = f"CD:A{event.key - pygame.K_RIGHT + 1}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.unicode:
+                                string = f"KD:{event.unicode}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.type == pygame.KEYUP:
+                            if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
+                                string = "CU:S".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
+                                string = "CU:A".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_TAB:
+                                string = "CU:T".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
+                                string = "CU:C".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.key == pygame.K_CAPSLOCK:
+                                string = "CU:CA".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif pygame.K_F1 <= event.key <= pygame.K_F12:
+                                string = f"CU:F{event.key - pygame.K_F1 + 1}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
+                                string = f"CU:A{event.key - pygame.K_RIGHT + 1}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.unicode:
+                                string = f"KU:{event.unicode}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.type == pygame.MOUSEMOTION:
+                            mx, my = pygame.mouse.get_pos()
+                            string = f"M:{mx}:{my}".encode()
                             cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
-                            string = "CD:A".encode()
+                        elif event.type == pygame.MOUSEBUTTONDOWN:
+                            if event.button == 4:
+                                string = "SU".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.button == 5:
+                                string = "SD".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.button == 6:
+                                string = "B".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            elif event.button == 7:
+                                string = "F".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                            else:
+                                string = f"MD:{pygame.mouse.get_pressed()}".encode()
+                                cs.sendall(len(string).to_bytes(4, 'big') + string)
+                        elif event.type == pygame.MOUSEBUTTONUP and event.button != 4 and event.button != 5 and event.button != 6 and event.button != 7:
+                            string = f"MU:{pygame.mouse.get_pressed()}".encode()
                             cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_TAB:
-                            string = "CD:T".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
-                            string = "CD:C".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_CAPSLOCK:
-                            string = "CD:CA".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
-                            string = f"CD:F{event.key - pygame.K_F1 + 1}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
-                            string = f"CD:A{event.key - pygame.K_RIGHT + 1}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.unicode:
-                            string = f"KD:{event.unicode}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    elif event.type == pygame.KEYUP:
-                        if event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT:
-                            string = "CU:S".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_LALT or event.key == pygame.K_RALT:
-                            string = "CU:A".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_TAB:
-                            string = "CU:T".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_LCTRL or event.key == pygame.K_RCTRL:
-                            string = "CU:C".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.key == pygame.K_CAPSLOCK:
-                            string = "CU:CA".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif pygame.K_F1 <= event.key <= pygame.K_F12:
-                            string = f"CU:F{event.key - pygame.K_F1 + 1}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif pygame.K_RIGHT <= event.key <= pygame.K_UP:
-                            string = f"CU:A{event.key - pygame.K_RIGHT + 1}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.unicode:
-                            string = f"KU:{event.unicode}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    elif event.type == pygame.MOUSEMOTION:
-                        mx, my = pygame.mouse.get_pos()
-                        string = f"M:{mx}:{my}".encode()
-                        cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    elif event.type == pygame.MOUSEBUTTONDOWN:
-                        if event.button == 4:
-                            string = "SU".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.button == 5:
-                            string = "SD".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.button == 6:
-                            string = "B".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        elif event.button == 7:
-                            string = "F".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                        else:
-                            string = f"MD:{pygame.mouse.get_pressed()}".encode()
-                            cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    elif event.type == pygame.MOUSEBUTTONUP and event.button != 4 and event.button != 5 and event.button != 6 and event.button != 7:
-                        string = f"MU:{pygame.mouse.get_pressed()}".encode()
-                        cs.sendall(len(string).to_bytes(4, 'big') + string)
-                    iqueue.task_done()
+
+            fqueue = deque(maxlen=100)
+            equeue = deque(maxlen=20)
+            iqueue = Queue(maxsize=100)
             
             def stream(cs):
-                count = 0
                 try:
                     while not End[0]:
                         start = time.perf_counter()
-                        size = recv_exact(cs, 4)
+                        size = cs.recv(4)
                         if not size:
                             break
-                        # start = time.perf_counter()
                         size = int.from_bytes(size, 'big')
-                        packets = recv_exact(cs, size)
-                        raw = bytes(packets)
+                        raw = recv_exact(cs, size)
                         if not raw: # Skip empty packets
                             continue
-                        # print(f"Internet time: {time.perf_counter() - start}")
-                        # if fqueue.full():
-                        #     print(f"Internet Full {count}")
-                        #     count += 1
-                        #     try: fqueue.join()
-                        #     except: pass
-                        fqueue.put(raw)
+                        fqueue.append(raw)
                         fs[0] = time.perf_counter() - start
                 except OSError:
                     End[0] = True
 
             def decoding():
-                count = 0
                 while not End[0]:
-                    # ADD A THREAD LOCK FOR GETTING USING deque
                     start = time.perf_counter()
-                    raw = fqueue.get()
+                    try:
+                        raw = fqueue.popleft() 
+                    except IndexError:
+                        time.sleep(0.0005)
+                        continue
                     bitstream = np.frombuffer(raw, dtype=np.uint8)
                     packet_meta = nvc.PacketData()
                     packet_meta.bsl_data = bitstream.ctypes.data
@@ -534,13 +546,7 @@ def tryConnect(server, host, port, input, encode):
                     packet_meta.pts = 0 # or your actual timestamp
                     for frame in nvdec.Decode(packet_meta):
                         cpu_abgr = np.from_dlpack(frame)
-                        # if equeue.full():
-                        #     print(f"Decode Full {count}")
-                        #     count += 1
-                        #     try: equeue.join()
-                        #     except: pass
-                        equeue.put(cpu_abgr)
-                    # print(f"Decoding time: {time.perf_counter() - start}")
+                        equeue.append(cpu_abgr)
                     fs[1] = time.perf_counter() - start
 
             threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
@@ -557,20 +563,25 @@ def tryConnect(server, host, port, input, encode):
             f2 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
-            TARGET_FPS = 125
+            TARGET_FPS = 130
             while not End[0]:
                 try:
-                    # clock.tick(TARGET_FPS)
-                    for event in pygame.event.get():
-                        iqueue.put(event)
+                    clock.tick(TARGET_FPS)
+                    iqueue.put(pygame.event.get())
+                    # for event in pygame.event.get():
+                    #     iqueue.put(event)
                     # start = time.perf_counter()
                     # bgr = cv2.cvtColor(equeue.get(), cv2.COLOR_YUV2RGB_NV12)
                     # if equeue.qsize() < 1:
                     #     continue
-                    while equeue.qsize() > 1:
-                        equeue.get_nowait()
-                    bgr = equeue.get()
-                    if bgr is None:
+                    try:
+                        if len(equeue) >= 2:
+                            bgr = equeue.popleft()
+                        else:
+                            time.sleep(.0005)
+                            continue
+                    except IndexError:
+                        time.sleep(0.0005)
                         continue
                     start = time.perf_counter()
                     # print(bgr.shape)
@@ -591,12 +602,12 @@ def tryConnect(server, host, port, input, encode):
                     f1.append(fs[1])
                     f2.append(fs[2])
                     if len(f1) == f1.maxlen:
-                        fps_surface = font.render(f"{display_fps_text} Internet {fqueue.qsize()}: {round(sum(f0) / len(f0), 5)}, Decoding {equeue.qsize()}: {round(sum(f1) / len(f1), 5)}, Displaying: {round(sum(f2) / len(f2), 5)}", True, (0, 255, 0), (0, 0, 0))
+                        fps_surface = font.render(f"{display_fps_text} Internet {len(fqueue)}: {round(sum(f0) / len(f0), 5)}, Decoding {len(equeue)}: {round(sum(f1) / len(f1), 5)}, Displaying: {round(sum(f2) / len(f2), 5)}", True, (0, 255, 0), (0, 0, 0))
                         f0 = deque(maxlen=max_length)
                         f1 = deque(maxlen=max_length)
                         f2 = deque(maxlen=max_length)
                     screen.blit(fps_surface, (10, 10))
-                    pygame.display.update()
+                    pygame.display.flip()
                     fs[2] = time.perf_counter() - start
                     # pygame.display.flip()
                     # print(f"Display frame time: {time.perf_counter() - start}")
