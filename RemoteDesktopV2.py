@@ -452,7 +452,7 @@ def tryConnect(server, host, port, input, encode):
         
         try:
             pygame.init()
-            screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.DOUBLEBUF | pygame.HWSURFACE | pygame.SCALED)
+            screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN | pygame.DOUBLEBUF | pygame.HWSURFACE | pygame.SCALED, vsync=0)
             pygame.display.set_caption("Remote Desktop")
             font = pygame.font.SysFont("Arial", 24)
 
@@ -609,7 +609,7 @@ def tryConnect(server, host, port, input, encode):
             f3 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
-            TARGET_FPS = 121
+            TARGET_FPS = 123
             while not End[0]:
                 try:
                     clock.tick(TARGET_FPS)
@@ -651,7 +651,7 @@ def tryConnect(server, host, port, input, encode):
                         f2 = deque(maxlen=max_length)
                         f3 = deque(maxlen=max_length)
                     screen.blit(fps_surface, (10, 10))
-                    fs[3] = time.time() - (t + offset)
+                    fs[3] = (time.time() - (t + offset)) * 1000
                     pygame.display.flip()
                     fs[2] = time.perf_counter() - start
                     # pygame.display.flip()
