@@ -29,6 +29,7 @@ def get_clock_offset(sock, server):
     offset = []
     if server:
         for _ in range(times):
+            print("Something")
             request = sock.recv(12, socket.MSG_WAITALL)
             if not request: 
                 break
@@ -247,7 +248,7 @@ def tryConnect(server, host, port, input, encode):
 
                 while not End[0]:
                     frame = camera.get_latest_frame()
-                    fqueue.append((time.perf_counter(), frame))
+                    fqueue.append((time.time(), frame))
 
             def sending(conns):
                 try:
@@ -427,7 +428,7 @@ def tryConnect(server, host, port, input, encode):
             try:
                 connId, _ = serverSocket.accept()
                 print("Client Connected")
-                get_clock_offset((connId, True))
+                get_clock_offset(connId, True)
                 threading.Thread(
                     target=streamToClient,
                     args=(connId,),
@@ -446,7 +447,7 @@ def tryConnect(server, host, port, input, encode):
             return
         print("Server found")
 
-        offset = get_clock_offset((clientSocket, False))
+        offset = get_clock_offset(clientSocket, False)
         print(f"The offset: {offset}")
         
         try:
@@ -650,7 +651,7 @@ def tryConnect(server, host, port, input, encode):
                         f2 = deque(maxlen=max_length)
                         f3 = deque(maxlen=max_length)
                     screen.blit(fps_surface, (10, 10))
-                    fs[3] = time.perf_counter() - t
+                    fs[3] = time.time() - (t + offset)
                     pygame.display.flip()
                     fs[2] = time.perf_counter() - start
                     # pygame.display.flip()
