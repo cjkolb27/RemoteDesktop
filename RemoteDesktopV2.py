@@ -15,6 +15,8 @@ from pynput.mouse import Button, Controller as MouseController
 import bettercam
 import ast
 from collections import deque
+import psutil
+import struct
 
 WIDTH, HEIGHT = 2560, 1440
 FPS = 60
@@ -213,37 +215,44 @@ def tryConnect(server, host, port, input, encode):
         serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         print(f"{host} {port}")
         serverSocket.bind(("0.0.0.0", port))
-        serverSocket.listen(1)
+        serverSocket.listen()
 
         def streamToClient(conn):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            fqueue = Queue(maxsize=1)
+            # fqueue = Queue(maxsize=1)
+            fqueue = deque(maxlen=1)
             def capture():
+                p = psutil.Process()
+                p.nice(psutil.HIGH_PRIORITY_CLASS)
                 camera = bettercam.create(device_idx=0, output_color="BGRA")
                 camera.start(target_fps=120, video_mode=True)
 
                 while not End[0]:
                     frame = camera.get_latest_frame()
-                    if fqueue.full():
-                        print("Full")
-                        try: fqueue.get_nowait() # Always keep the queue fresh
-                        except: pass
-                    fqueue.put(frame)
+                    fqueue.append((time.perf_counter(), frame))
 
             def sending(conns):
                 try:
+                    p = psutil.Process()
+                    p.nice(psutil.HIGH_PRIORITY_CLASS)
                     ENC_PARAMS = {
                         "bitrate": "50M",
                         "max_bitrate": "55M",
                         "vbv_buffer_size": "2M",
-                        "rc": "cbr",                # CBR is more stable for AV1 networking
-                        "tuning_info": "low_latency",
+                        "rc": "vbr",                # CBR is more stable for AV1 networking
+                        # "tuning_info": "low_latency",
+                        "tuning_info": "high_quality",
+                        "color_primaries": "bt709",
+                        "transfer_characteristics": "bt709",
+                        "colorspace": "bt709",
+                        "video_full_range_flag": "1",
                         "repeat_seq_header": "1",   # Added for AV1
-                        "aw_mode": "2",
-                        "temporal_aq": "1",
-                        "instra_refresh": "1",
+                        "bf": "0",
+                        "aq_mode": "2",
+                        "temporal_aq": "1",           # Prevents "crawling" noise in background
+                        "intra_refresh": "1",
+                        "intra_refresh_cnt": "240",   # Slower refresh = more bits for static details
                         "multipass": "fullres",
-                        "insra_refresh_cnt":"480",
                     }
 
                     encoder = nvc.CreateEncoder(
@@ -251,10 +260,10 @@ def tryConnect(server, host, port, input, encode):
                         height=HEIGHT,
                         fmt="ABGR",
                         codec="av1",
-                        gop=0,
+                        gop=240,
                         usecpuinputbuffer=True,
                         fps=120,
-                        preset="P3",
+                        preset="P5",
                         **ENC_PARAMS
                     )
                     fps_start_time = time.time()
@@ -262,7 +271,11 @@ def tryConnect(server, host, port, input, encode):
                     current_fps = 0
                     first = True
                     while not End[0]:
-                        frame = fqueue.get()
+                        try:
+                            t, frame = fqueue.popleft()
+                        except IndexError:
+                            time.sleep(0.0005)
+                            continue
                         packets = encoder.Encode(frame)
                         if first and packets.startswith(b'DKIF'):
                             packets = packets[32:]
@@ -276,7 +289,8 @@ def tryConnect(server, host, port, input, encode):
                             fps_counter = 0
                             fps_start_time = time.time()
                         if packets:
-                            conns.send(len(packets).to_bytes(4, 'big') + packets)
+                            payload = struct.pack('>d', t) + packets
+                            conns.send(len(payload).to_bytes(4, 'big') + payload)
 
                 except (BrokenPipeError, ConnectionResetError):
                     print("Client disconnected")
@@ -429,9 +443,11 @@ def tryConnect(server, host, port, input, encode):
                 usedevicememory=False
             )
 
-            fs = [0.0, 0.0, 0.0]
+            fs = [0.0, 0.0, 0.0, 0.0]
 
             def inputs(cs):
+                p = psutil.Process()
+                p.nice(psutil.HIGH_PRIORITY_CLASS)
                 while not End[0]:
                     for event in iqueue.get():
                         # event = iqueue.get()
@@ -516,6 +532,8 @@ def tryConnect(server, host, port, input, encode):
             iqueue = Queue(maxsize=100)
             
             def stream(cs):
+                p = psutil.Process()
+                p.nice(psutil.HIGH_PRIORITY_CLASS)
                 try:
                     while not End[0]:
                         start = time.perf_counter()
@@ -524,18 +542,22 @@ def tryConnect(server, host, port, input, encode):
                             break
                         size = int.from_bytes(size, 'big')
                         raw = recv_exact(cs, size)
+                        t = struct.unpack('>d', raw[:8])[0]
+                        raw = raw[8:]
                         if not raw: # Skip empty packets
                             continue
-                        fqueue.append(raw)
+                        fqueue.append((t, raw))
                         fs[0] = time.perf_counter() - start
                 except OSError:
                     End[0] = True
 
             def decoding():
+                p = psutil.Process()
+                p.nice(psutil.HIGH_PRIORITY_CLASS)
                 while not End[0]:
                     start = time.perf_counter()
                     try:
-                        raw = fqueue.popleft() 
+                        t, raw = fqueue.popleft() 
                     except IndexError:
                         time.sleep(0.0005)
                         continue
@@ -546,7 +568,7 @@ def tryConnect(server, host, port, input, encode):
                     packet_meta.pts = 0 # or your actual timestamp
                     for frame in nvdec.Decode(packet_meta):
                         cpu_abgr = np.from_dlpack(frame)
-                        equeue.append(cpu_abgr)
+                        equeue.append((t, cpu_abgr))
                     fs[1] = time.perf_counter() - start
 
             threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
@@ -561,6 +583,7 @@ def tryConnect(server, host, port, input, encode):
             f0 = deque(maxlen=max_length)
             f1 = deque(maxlen=max_length)
             f2 = deque(maxlen=max_length)
+            f3 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
             TARGET_FPS = 130
@@ -575,8 +598,10 @@ def tryConnect(server, host, port, input, encode):
                     # if equeue.qsize() < 1:
                     #     continue
                     try:
+                        while len(equeue) > 3:
+                            equeue.popleft()
                         if len(equeue) >= 2:
-                            bgr = equeue.popleft()
+                            t, bgr = equeue.popleft()
                         else:
                             time.sleep(.0005)
                             continue
@@ -601,12 +626,15 @@ def tryConnect(server, host, port, input, encode):
                     f0.append(fs[0])
                     f1.append(fs[1])
                     f2.append(fs[2])
+                    f3.append(fs[3])
                     if len(f1) == f1.maxlen:
-                        fps_surface = font.render(f"{display_fps_text} Internet {len(fqueue)}: {round(sum(f0) / len(f0), 5)}, Decoding {len(equeue)}: {round(sum(f1) / len(f1), 5)}, Displaying: {round(sum(f2) / len(f2), 5)}", True, (0, 255, 0), (0, 0, 0))
+                        fps_surface = font.render(f"{display_fps_text} \r\nInternet {len(fqueue)}: {round(sum(f0) / len(f0), 5)} \r\nDecoding {len(equeue)}: {round(sum(f1) / len(f1), 5)} \r\nDisplaying: {round(sum(f2) / len(f2), 5)} \r\nRound Trip: {round(sum(f3) / len(f3), 5)}", True, (0, 255, 0), (0, 0, 0))
                         f0 = deque(maxlen=max_length)
                         f1 = deque(maxlen=max_length)
                         f2 = deque(maxlen=max_length)
+                        f3 = deque(maxlen=max_length)
                     screen.blit(fps_surface, (10, 10))
+                    fs[3] = time.perf_counter() - t
                     pygame.display.flip()
                     fs[2] = time.perf_counter() - start
                     # pygame.display.flip()
