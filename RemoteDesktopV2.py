@@ -38,20 +38,20 @@ def get_clock_offset(sock, server):
         return None
     else:
         for _ in range(times):
-            t = time.perf_counter()
+            t0 = time.time()
             sock.sendall(b'SYNC_REQUEST')
             response = sock.recv(8, socket.MSG_WAITALL)
             if not response: 
                 break
             st = struct.unpack('>d', response)[0]
 
-            t1 = time.perf_counter()
-            rtt = t1 - t
-            estimate = st + (rtt / 2)
-            local = time.time()
+            t1 = time.time()
+            rtt = t1 - t0
+            off = st - (t0 + rtt / 2)
 
-            offset.append(estimate - local)
+            offset.append(off)
             time.sleep(0.01)
+            print(f"server={st}, client_est={t0 + rtt/2}, offset={off}, rtt={rtt}")
     return sum(offset) / len(offset)
 
 def recv_exact(sock, size):
@@ -609,23 +609,38 @@ def tryConnect(server, host, port, input, encode):
             f3 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
-            TARGET_FPS = 123
+            TARGET_FPS = 62
+            start = 1/TARGET_FPS
             while not End[0]:
                 try:
                     clock.tick(TARGET_FPS)
                     iqueue.put(pygame.event.get())
-                    try:
-                        while len(equeue) > 4:
-                            equeue.popleft()
-                        if len(equeue) >= 2:
-                            t, bgr = equeue.popleft()
-                        else:
-                            time.sleep(.0005)
-                            continue
-                    except IndexError:
-                        time.sleep(0.0005)
+                    # try:
+                    #     while len(equeue) > 4:
+                    #         equeue.popleft()
+                    #     if len(equeue) >= 1:
+                    #         bgr = None
+                    #         while bgr is None:
+                    #             try:
+                    #                 t, bgr = equeue.popleft()
+                    #             except IndexError:
+                    #                 time.sleep(.0005)
+                    #                 bgr = None
+                    #                 continue
+                    #     else:
+                    #         time.sleep(.0005)
+                    #         continue
+                    # except IndexError:
+                    #     time.sleep(0.0005)
+                    #     continue
+                    while len(equeue) > 3:
+                        equeue.popleft()
+                    if len(equeue) >= 1:
+                        t, bgr = equeue.popleft()
+                    else:
+                        time.sleep(.0005)
                         continue
-                    start = time.perf_counter()
+                    # start = time.perf_counter()
                     # print(bgr.shape)
                     h, w, _ = bgr.shape
                     # if surface is None:
@@ -645,15 +660,16 @@ def tryConnect(server, host, port, input, encode):
                     f2.append(fs[2])
                     f3.append(fs[3])
                     if len(f1) == f1.maxlen:
-                        fps_surface = font.render(f"{display_fps_text} \r\nInternet {len(fqueue)}: {round(sum(f0) / len(f0), 5)} \r\nDecoding {len(equeue)}: {round(sum(f1) / len(f1), 5)} \r\nDisplaying: {round(sum(f2) / len(f2), 5)} \r\nRound Trip: {round(sum(f3) / len(f3), 5)}", True, (0, 255, 0), (0, 0, 0))
+                        fps_surface = font.render(f"{display_fps_text} \r\nInternet {len(fqueue)}: {round(sum(f0) / len(f0), 5)} \r\nDecoding {len(equeue)}: {round(sum(f1) / len(f1), 5)} \r\nDisplaying: {round(sum(f2) / len(f2), 5)} \r\nRound Trip: {round(sum(f3) / len(f3), 1)}", True, (0, 255, 0), (0, 0, 0))
                         f0 = deque(maxlen=max_length)
                         f1 = deque(maxlen=max_length)
                         f2 = deque(maxlen=max_length)
                         f3 = deque(maxlen=max_length)
                     screen.blit(fps_surface, (10, 10))
-                    fs[3] = (time.time() - (t + offset)) * 1000
+                    fs[3] = (time.time()- (t - offset )) * 1000
                     pygame.display.flip()
                     fs[2] = time.perf_counter() - start
+                    start = time.perf_counter()
                     # pygame.display.flip()
                     # print(f"Display frame time: {time.perf_counter() - start}")
                 except Exception as e:
