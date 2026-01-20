@@ -24,22 +24,40 @@ GPU_ID = 0
 
 print(dir(nvc.OutputColorType))
 
-# def recv_exact(sock, size):
-#     data = b""
-#     while len(data) < size:
-#         chunk = sock.recv(size - len(data))
-#         if not chunk:
-#             raise ConnectionError("Socket closed")
-#         data += chunk
-#     return data
+def get_clock_offset(sock, server):
+    times = 10
+    offset = []
+    if server:
+        for _ in range(times):
+            request = sock.recv(12, socket.MSG_WAITALL)
+            if not request: 
+                break
+            t = time.time()
+            sock.sendall(struct.pack('>d', t))
+        return None
+    else:
+        for _ in range(times):
+            t = time.perf_counter()
+            sock.sendall(b'SYNC_REQUEST')
+            response = sock.recv(8, socket.MSG_WAITALL)
+            if not response: 
+                break
+            st = struct.unpack('>d', response)[0]
+
+            t1 = time.perf_counter()
+            rtt = t1 - t
+            estimate = st + (rtt / 2)
+            local = time.time()
+
+            offset.append(estimate - local)
+            time.sleep(0.01)
+    return sum(offset) / len(offset)
 
 def recv_exact(sock, size):
     # Pre-allocate the memory once
     view = memoryview(bytearray(size))
     pos = 0
     while pos < size:
-        # sock.recv_into reads directly into the pre-allocated buffer
-        # No 'data += chunk' means NO new objects are created
         nbytes = sock.recv_into(view[pos:], size - pos)
         if not nbytes:
             raise ConnectionError("Socket closed")
@@ -236,8 +254,8 @@ def tryConnect(server, host, port, input, encode):
                     p = psutil.Process()
                     p.nice(psutil.HIGH_PRIORITY_CLASS)
                     ENC_PARAMS = {
-                        "bitrate": "50M",
-                        "max_bitrate": "55M",
+                        "bitrate": "40M",
+                        "max_bitrate": "45M",
                         "vbv_buffer_size": "2M",
                         "rc": "vbr",                # CBR is more stable for AV1 networking
                         # "tuning_info": "low_latency",
@@ -290,7 +308,7 @@ def tryConnect(server, host, port, input, encode):
                             fps_start_time = time.time()
                         if packets:
                             payload = struct.pack('>d', t) + packets
-                            conns.send(len(payload).to_bytes(4, 'big') + payload)
+                            conns.sendall(len(payload).to_bytes(4, 'big') + payload)
 
                 except (BrokenPipeError, ConnectionResetError):
                     print("Client disconnected")
@@ -409,6 +427,7 @@ def tryConnect(server, host, port, input, encode):
             try:
                 connId, _ = serverSocket.accept()
                 print("Client Connected")
+                get_clock_offset((connId, True))
                 threading.Thread(
                     target=streamToClient,
                     args=(connId,),
@@ -426,6 +445,9 @@ def tryConnect(server, host, port, input, encode):
         except OSError:
             return
         print("Server found")
+
+        offset = get_clock_offset((clientSocket, False))
+        print(f"The offset: {offset}")
         
         try:
             pygame.init()
@@ -586,19 +608,13 @@ def tryConnect(server, host, port, input, encode):
             f3 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
-            TARGET_FPS = 130
+            TARGET_FPS = 121
             while not End[0]:
                 try:
                     clock.tick(TARGET_FPS)
                     iqueue.put(pygame.event.get())
-                    # for event in pygame.event.get():
-                    #     iqueue.put(event)
-                    # start = time.perf_counter()
-                    # bgr = cv2.cvtColor(equeue.get(), cv2.COLOR_YUV2RGB_NV12)
-                    # if equeue.qsize() < 1:
-                    #     continue
                     try:
-                        while len(equeue) > 3:
+                        while len(equeue) > 4:
                             equeue.popleft()
                         if len(equeue) >= 2:
                             t, bgr = equeue.popleft()
