@@ -244,7 +244,7 @@ def tryConnect(server, host, port, input, encode):
                 p = psutil.Process()
                 p.nice(psutil.HIGH_PRIORITY_CLASS)
                 camera = bettercam.create(device_idx=0, output_color="BGRA")
-                camera.start(target_fps=120, video_mode=True)
+                camera.start(target_fps=FPS, video_mode=True)
 
                 while not End[0]:
                     frame = camera.get_latest_frame()
@@ -281,7 +281,7 @@ def tryConnect(server, host, port, input, encode):
                         codec="av1",
                         gop=240,
                         usecpuinputbuffer=True,
-                        fps=120,
+                        fps=FPS,
                         preset="P5",
                         **ENC_PARAMS
                     )
@@ -609,7 +609,7 @@ def tryConnect(server, host, port, input, encode):
             f3 = deque(maxlen=max_length)
             fps_surface = font.render("", True, (0, 255, 0))
             clock = pygame.time.Clock()
-            TARGET_FPS = 62
+            TARGET_FPS = FPS + 2
             start = 1/TARGET_FPS
             while not End[0]:
                 try:
