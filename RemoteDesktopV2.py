@@ -282,7 +282,7 @@ def tryConnect(server, host, port, input, encode):
                         gop=240,
                         usecpuinputbuffer=True,
                         fps=FPS,
-                        preset="P5",
+                        preset="P2",
                         **ENC_PARAMS
                     )
                     fps_start_time = time.time()
