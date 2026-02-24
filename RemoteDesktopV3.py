@@ -21,7 +21,7 @@ import struct
 import json
 
 WIDTH, HEIGHT = 2560, 1440
-FPS = 165
+FPS = 60
 GPU_ID = 0
 
 def get_clock_offset(sock, server):
@@ -757,7 +757,8 @@ def tryConnect(server, host, port, input, encode):
                         display_fps_counter = 0
                         display_fps_start_time = time.perf_counter()
 
-                    screen.blit(surface, (0, 0))
+                    scaled_frame = pygame.transform.scale(surface, (WIDTH, HEIGHT))
+                    screen.blit(scaled_frame, (0, 0))
                     f0.append(fs[0])
                     f1.append(fs[1])
                     f2.append(fs[2])
