@@ -21,7 +21,7 @@ import struct
 import json
 
 WIDTH, HEIGHT = 2560, 1440
-FPS = 60
+FPS = 130
 GPU_ID = 0
 
 def get_clock_offset(sock, server):
@@ -694,7 +694,15 @@ def tryConnect(server, host, port, input, encode):
                         raw = raw[8:]
                         if not raw: # Skip empty packets
                             continue
-                        fqueue.append((t, raw))
+                        # fqueue.append((t, raw))
+                        bitstream = np.frombuffer(raw, dtype=np.uint8)
+                        packet_meta = nvc.PacketData()
+                        packet_meta.bsl_data = bitstream.ctypes.data
+                        packet_meta.bsl = bitstream.nbytes
+                        packet_meta.pts = 0 # or your actual timestamp
+                        for frame in nvdec.Decode(packet_meta):
+                            cpu_abgr = np.from_dlpack(frame)
+                            equeue.append((t, cpu_abgr))
                         fs[0] = time.perf_counter() - start
                 except OSError:
                     End[0] = True
@@ -721,7 +729,7 @@ def tryConnect(server, host, port, input, encode):
 
             threading.Thread(target=inputs, args=(clientSocket,), daemon=True).start()
             threading.Thread(target=stream, args=(clientSocket,), daemon=True).start()
-            threading.Thread(target=decoding, args=(), daemon=True).start()
+            # threading.Thread(target=decoding, args=(), daemon=True).start()
             
             display_fps_start_time = time.perf_counter()
             display_fps_counter = 0
