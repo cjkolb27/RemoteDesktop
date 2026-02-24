@@ -9,11 +9,11 @@ import numpy as np
 import time
 from queue import Queue
 import PyNvVideoCodec as nvc
+import torch
 import pygame
 import keyboard
 from pynput.keyboard import Controller, Key
 from pynput.mouse import Button, Controller as MouseController
-import bettercam
 import ast
 from collections import deque
 import psutil
@@ -21,11 +21,9 @@ import struct
 import json
 
 WIDTH, HEIGHT = 2560, 1440
-FPS = 60
+FPS = 165
 GPU_ID = 0
 
-print(dir(nvc))
-# print(bettercam.output_info())
 def get_clock_offset(sock, server):
     times = 10
     offset = []
@@ -242,16 +240,120 @@ def tryConnect(server, host, port, input, encode):
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             # fqueue = Queue(maxsize=1)
             fqueue = deque(maxlen=1)
-            def capture():
-                p = psutil.Process()
-                p.nice(psutil.HIGH_PRIORITY_CLASS)
-                camera = bettercam.create(device_idx=0, output_color="BGRA")
-                
-                camera.start(target_fps=FPS, video_mode=True)
+            def capture(conns):
+                COLOR_MATRIX = torch.tensor([
+                    [ 1.6605, -0.5876, -0.0728],
+                    [-0.1246,  1.1329, -0.0083],
+                    [-0.0182, -0.1006,  1.1187]
+                ], device="cuda", dtype=torch.float32)
 
-                while not End[0]:
-                    frame = camera.get_latest_frame()
-                    fqueue.append((time.time(), frame))
+                def process_hdr_to_sdr(tor_bgra):
+                    # 1. Slice off Alpha and flip BGRA to RGB (H, W, 3)
+                    # Most HDR math is easier in RGB order
+                    rgb = tor_bgra[:, :, [2, 1, 0]].float() / 255.0
+                    
+                    # 2. Exposure & Tone Mapping (Reinhard)
+                    # This prevents the "too bright" look by squashing highlights
+                    exposure = 0.8  # Adjust this to taste
+                    rgb = rgb * exposure
+                    rgb = rgb / (1.0 + rgb) 
+                    
+                    # 3. Gamma Correction (PQ-ish to SDR Gamma)
+                    # This fixes the "washed out" look
+                    rgb = torch.pow(rgb, 1.0 / 2.2)
+                    
+                    # 4. Color Space Conversion (Rec.2020 -> Rec.709)
+                    # We flatten to (Pixels, 3) to do a fast Matrix Multiply
+                    h, w, c = rgb.shape
+                    rgb_flat = rgb.view(-1, 3)
+                    rgb_corrected = torch.mm(rgb_flat, COLOR_MATRIX.T)
+                    rgb = rgb_corrected.view(h, w, 3).clamp(0, 1)
+
+                    return rgb
+                try:
+                    p = psutil.Process()
+                    p.nice(psutil.HIGH_PRIORITY_CLASS)
+                    camera = dxcam_cpp.create(device_idx=0, output_color="BGRA")
+                    camera.start(target_fps=FPS, video_mode=True)
+
+                    ENC_PARAMS = {
+                        "bitrate": "30M",
+                        "max_bitrate": "35M",
+                        "vbv_buffer_size": "2M",
+                        "rc": "cbr",                # CBR is more stable for AV1 networking
+                        "tuning_info": "low_latency",
+                        # "tuning_info": "high_quality",
+                        "color_primaries": "bt709",
+                        "transfer_characteristics": "bt709",
+                        "colorspace": "bt709",
+                        "video_full_range_flag": "1",
+                        "repeat_seq_header": "1",   # Added for AV1
+                        "bf": "0",
+                        "aq_mode": "2",
+                        "temporal_aq": "1",           # Prevents "crawling" noise in background
+                        "intra_refresh": "1",
+                        "intra_refresh_cnt": "240",   # Slower refresh = more bits for static details
+                        "multipass": "fullres",
+                    }
+
+                    WIDTH = 2560
+                    HEIGHT = 2440
+
+                    encoder = nvc.CreateEncoder(
+                        width=WIDTH,
+                        height=HEIGHT,
+                        fmt="ABGR",
+                        codec="av1",
+                        gop=240,
+                        usecpuinputbuffer=True,
+                        fps=FPS,
+                        preset="P2",
+                        **ENC_PARAMS
+                    )
+                    
+                    fps_start_time = time.time()
+                    fps_counter = 0
+                    current_fps = 0
+                    first = True
+                    
+                    while not End[0]:
+                        frame = camera.get_latest_frame()
+                        if frame is None:
+                            continue
+
+                        if frame.shape == (HEIGHT, WIDTH, 4):
+                            packets = encoder.Encode(frame)
+                        else:
+                            tor = torch.from_numpy(frame).to("cuda")
+                            tor = tor.permute(2, 0, 1).unsqueeze(0).float()
+                            resized = torch.nn.functional.interpolate(
+                                tor, 
+                                size=(HEIGHT, WIDTH), 
+                                mode='bilinear', 
+                                align_corners=False, 
+                                antialias=True
+                            )
+                            final_tensor = resized.squeeze(0).permute(1, 2, 0).byte().contiguous()
+                            torch.cuda.synchronize()
+                            packets = encoder.Encode(final_tensor)
+                        
+                        if first and packets.startswith(b'DKIF'):
+                            packets = packets[32:]
+                            first = False
+                        if len(packets) > 12:
+                            packets = packets[12:]
+                        fps_counter += 1
+                        if (time.time() - fps_start_time) > 1.0:
+                            current_fps = fps_counter
+                            print(f"SERVER (Capture) FPS: {current_fps}")
+                            fps_counter = 0
+                            fps_start_time = time.time()
+                        if packets:
+                            payload = struct.pack('>d', time.time()) + packets
+                            conns.sendall(len(payload).to_bytes(4, 'big') + payload)
+                finally:
+                    End[0] = True
+                    conns.close()
                     
 
             def sending(conns):
@@ -278,6 +380,9 @@ def tryConnect(server, host, port, input, encode):
                         "multipass": "fullres",
                     }
 
+                    WIDTH = 640
+                    HEIGHT = 480
+
                     encoder = nvc.CreateEncoder(
                         width=WIDTH,
                         height=HEIGHT,
@@ -289,7 +394,7 @@ def tryConnect(server, host, port, input, encode):
                         preset="P2",
                         **ENC_PARAMS
                     )
-                    print(dir(encoder))
+                    
                     fps_start_time = time.time()
                     fps_counter = 0
                     current_fps = 0
@@ -298,9 +403,16 @@ def tryConnect(server, host, port, input, encode):
                         try:
                             t, frame = fqueue.popleft()
                         except IndexError:
-                            time.sleep(0.0005)
+                            time.sleep(0.0001)
                             continue
-                        packets = encoder.Encode(frame)
+                        if frame.shape == (HEIGHT, WIDTH, 4):
+                            packets = encoder.Encode(frame)
+                        else:
+                            tor = torch.from_numpy(frame).to("cuda").permute(2, 0, 1).unsqueeze(0).float()
+                            resized = torch.nn.functional.interpolate(tor, size=(HEIGHT, WIDTH), mode='bilinear')
+                            final_tensor = resized.squeeze(0).permute(1, 2, 0).byte().contiguous()
+                            packets = encoder.Encode(final_tensor)
+                        # packets = encoder.Encode(nvc.CAIMemoryView([WIDTH, HEIGHT, 4], [(WIDTH * 4), 4, 1], "|u1", frame, 0, False))
                         if first and packets.startswith(b'DKIF'):
                             packets = packets[32:]
                             first = False
@@ -423,8 +535,8 @@ def tryConnect(server, host, port, input, encode):
                     print(e)
                     End[0] = True
 
-            threading.Thread(target=capture, daemon=True).start()
-            threading.Thread(target=sending, args=(conn,), daemon=True).start()
+            threading.Thread(target=capture, args=(conn,), daemon=True).start()
+            # threading.Thread(target=sending, args=(conn,), daemon=True).start()
             threading.Thread(target=input, args=(conn,), daemon=True).start()
 
         print("Looking For Connections")
