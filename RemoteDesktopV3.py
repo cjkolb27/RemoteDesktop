@@ -356,85 +356,113 @@ def tryConnect(server, host, port, input, encode):
                     conns.close()
                     
 
-            def sending(conns):
-                try:
-                    p = psutil.Process()
-                    p.nice(psutil.HIGH_PRIORITY_CLASS)
-                    ENC_PARAMS = {
-                        "bitrate": "20M",
-                        "max_bitrate": "25M",
-                        "vbv_buffer_size": "2M",
-                        "rc": "cbr",                # CBR is more stable for AV1 networking
-                        "tuning_info": "low_latency",
-                        # "tuning_info": "high_quality",
-                        "color_primaries": "bt709",
-                        "transfer_characteristics": "bt709",
-                        "colorspace": "bt709",
-                        "video_full_range_flag": "1",
-                        "repeat_seq_header": "1",   # Added for AV1
-                        "bf": "0",
-                        "aq_mode": "2",
-                        "temporal_aq": "1",           # Prevents "crawling" noise in background
-                        "intra_refresh": "1",
-                        "intra_refresh_cnt": "240",   # Slower refresh = more bits for static details
-                        "multipass": "fullres",
-                    }
+            # def sending(conns):
+            #     try:
+            #         p = psutil.Process()
+            #         p.nice(psutil.HIGH_PRIORITY_CLASS)
+            #         ENC_PARAMS = {
+            #             "bitrate": "20M",
+            #             "max_bitrate": "25M",
+            #             "vbv_buffer_size": "2M",
+            #             "rc": "cbr",                # CBR is more stable for AV1 networking
+            #             "tuning_info": "low_latency",
+            #             # "tuning_info": "high_quality",
+            #             "color_primaries": "bt709",
+            #             "transfer_characteristics": "bt709",
+            #             "colorspace": "bt709",
+            #             "video_full_range_flag": "1",
+            #             "repeat_seq_header": "1",   # Added for AV1
+            #             "bf": "0",
+            #             "aq_mode": "2",
+            #             "temporal_aq": "1",           # Prevents "crawling" noise in background
+            #             "intra_refresh": "1",
+            #             "intra_refresh_cnt": "240",   # Slower refresh = more bits for static details
+            #             "multipass": "fullres",
+            #         }
 
-                    WIDTH = 640
-                    HEIGHT = 480
+            #         WIDTH = 640
+            #         HEIGHT = 480
 
-                    encoder = nvc.CreateEncoder(
-                        width=WIDTH,
-                        height=HEIGHT,
-                        fmt="ABGR",
-                        codec="av1",
-                        gop=240,
-                        usecpuinputbuffer=True,
-                        fps=FPS,
-                        preset="P2",
-                        **ENC_PARAMS
-                    )
+            #         encoder = nvc.CreateEncoder(
+            #             width=WIDTH,
+            #             height=HEIGHT,
+            #             fmt="ABGR",
+            #             codec="av1",
+            #             gop=240,
+            #             usecpuinputbuffer=True,
+            #             fps=FPS,
+            #             preset="P2",
+            #             **ENC_PARAMS
+            #         )
                     
-                    fps_start_time = time.time()
-                    fps_counter = 0
-                    current_fps = 0
-                    first = True
-                    while not End[0]:
-                        try:
-                            t, frame = fqueue.popleft()
-                        except IndexError:
-                            time.sleep(0.0001)
-                            continue
-                        if frame.shape == (HEIGHT, WIDTH, 4):
-                            packets = encoder.Encode(frame)
-                        else:
-                            tor = torch.from_numpy(frame).to("cuda").permute(2, 0, 1).unsqueeze(0).float()
-                            resized = torch.nn.functional.interpolate(tor, size=(HEIGHT, WIDTH), mode='bilinear')
-                            final_tensor = resized.squeeze(0).permute(1, 2, 0).byte().contiguous()
-                            packets = encoder.Encode(final_tensor)
-                        # packets = encoder.Encode(nvc.CAIMemoryView([WIDTH, HEIGHT, 4], [(WIDTH * 4), 4, 1], "|u1", frame, 0, False))
-                        if first and packets.startswith(b'DKIF'):
-                            packets = packets[32:]
-                            first = False
-                        if len(packets) > 12:
-                            packets = packets[12:]
-                        fps_counter += 1
-                        if (time.time() - fps_start_time) > 1.0:
-                            current_fps = fps_counter
-                            print(f"SERVER (Capture) FPS: {current_fps}")
-                            fps_counter = 0
-                            fps_start_time = time.time()
-                        if packets:
-                            payload = struct.pack('>d', t) + packets
-                            conns.sendall(len(payload).to_bytes(4, 'big') + payload)
+            #         fps_start_time = time.time()
+            #         fps_counter = 0
+            #         current_fps = 0
+            #         first = True
+            #         while not End[0]:
+            #             try:
+            #                 t, frame = fqueue.popleft()
+            #             except IndexError:
+            #                 time.sleep(0.0001)
+            #                 continue
+            #             if frame.shape == (HEIGHT, WIDTH, 4):
+            #                 packets = encoder.Encode(frame)
+            #             else:
+            #                 tor = torch.from_numpy(frame).to("cuda").permute(2, 0, 1).unsqueeze(0).float() / 255.0
 
-                except (BrokenPipeError, ConnectionResetError):
-                    print("Client disconnected")
-                    pass
+            #                 # 2. Resize
+            #                 resized = torch.nn.functional.interpolate(tor, size=(HEIGHT, WIDTH), mode='bilinear')
 
-                finally:
-                    End[0] = True
-                    conns.close()
+            #                 # --- HDR TO "TRUE" SDR CORRECTION BLOCK ---
+            #                 # We work with 'resized' while it's still a float tensor on the GPU.
+
+            #                 # A. Restore Gamma (Fixes the "washed out" or "too dark" look)
+            #                 # 0.8 to 1.2 is a good range; < 1.0 brightens, > 1.0 darkens shadows.
+            #                 resized = torch.pow(resized, 0.85) 
+
+            #                 # B. Boost Saturation (Improper HDR often looks grey)
+            #                 # We convert slightly towards grayscale and interpolate to "push" colors.
+            #                 grayscale = resized.mean(dim=1, keepdim=True)
+            #                 resized = torch.lerp(grayscale, resized, 1.3) # 1.3 = 30% saturation boost
+
+            #                 # C. Contrast Adjustment (Using a simple linear scale around the 0.5 midpoint)
+            #                 resized = (resized - 0.5) * 1.2 + 0.5
+
+            #                 # D. Clamp to prevent "out of bounds" colors after the math
+            #                 resized = torch.clamp(resized, 0, 1)
+            #                 # ------------------------------------------
+
+            #                 # 3. Finalize and Encode
+            #                 # Multiply by 255 before converting back to byte
+            #                 final_tensor = (resized.squeeze(0).permute(1, 2, 0) * 255).byte().contiguous()
+            #                 packets = encoder.Encode(final_tensor)
+            #                 # tor = torch.from_numpy(frame).to("cuda").permute(2, 0, 1).unsqueeze(0).float()
+            #                 # resized = torch.nn.functional.interpolate(tor, size=(HEIGHT, WIDTH), mode='bilinear')
+            #                 # final_tensor = resized.squeeze(0).permute(1, 2, 0).byte().contiguous()
+            #                 # packets = encoder.Encode(final_tensor)
+            #             # packets = encoder.Encode(nvc.CAIMemoryView([WIDTH, HEIGHT, 4], [(WIDTH * 4), 4, 1], "|u1", frame, 0, False))
+            #             if first and packets.startswith(b'DKIF'):
+            #                 packets = packets[32:]
+            #                 first = False
+            #             if len(packets) > 12:
+            #                 packets = packets[12:]
+            #             fps_counter += 1
+            #             if (time.time() - fps_start_time) > 1.0:
+            #                 current_fps = fps_counter
+            #                 print(f"SERVER (Capture) FPS: {current_fps}")
+            #                 fps_counter = 0
+            #                 fps_start_time = time.time()
+            #             if packets:
+            #                 payload = struct.pack('>d', t) + packets
+            #                 conns.sendall(len(payload).to_bytes(4, 'big') + payload)
+
+            #     except (BrokenPipeError, ConnectionResetError):
+            #         print("Client disconnected")
+            #         pass
+
+            #     finally:
+            #         End[0] = True
+            #         conns.close()
 
             def input(conns):
                 kb = Controller()
